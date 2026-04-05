@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QShortcut, QKeySequence
 
 from audio.playback import PlaybackEngine
-from core.project import TranscriptProject, Segment, Word
+from core.project import TranscriptProject, Segment, Word, Speaker
 from core.settings import get_last_directory, set_last_directory
 
 # Reuse file_io from audio_processor (parent project)
@@ -30,6 +30,7 @@ COL_TIME = 0
 COL_SPEAKER = 1
 COL_TEXT = 2
 COL_TYPE = 3
+COL_BG = 4
 
 
 class TranscribeTab(QWidget):
@@ -94,8 +95,8 @@ class TranscribeTab(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Transcript table
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Time", "Speaker", "Text", "Type"])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Time", "Speaker", "Text", "Type", "BG"])
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -110,6 +111,7 @@ class TranscribeTab(QWidget):
         header.setSectionResizeMode(COL_SPEAKER, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(COL_TEXT, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COL_TYPE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_BG, QHeaderView.ResizeMode.ResizeToContents)
 
         self.table.setStyleSheet("""
             QTableWidget {
@@ -239,27 +241,68 @@ class TranscribeTab(QWidget):
         act_delete = menu.addAction("Delete segment")
         act_delete.triggered.connect(lambda: self._delete_segment(row))
 
+        menu.addSeparator()
+
+        # Background change
+        bg_menu = menu.addMenu("Set Background Change Here")
+
+        # Procedural options
+        from video.backgrounds import ALL_BACKGROUNDS
+        for bg_cls in ALL_BACKGROUNDS:
+            act = bg_menu.addAction(bg_cls.name)
+            act.triggered.connect(lambda checked, name=bg_cls.name: self._set_background_change(row, name))
+
+        bg_menu.addSeparator()
+        act_bg_image = bg_menu.addAction("Choose Image...")
+        act_bg_image.triggered.connect(lambda: self._set_background_image(row))
+
+        if seg.background_change:
+            act_clear_bg = menu.addAction("Clear Background Change")
+            act_clear_bg.triggered.connect(lambda: self._clear_background_change(row))
+
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     # --- Segment editing ---
 
     def _on_cell_changed(self, row: int, col: int):
-        """Handle inline edits to the text column."""
+        """Handle inline edits to text or speaker columns."""
         if self._updating_table:
-            return
-        if col != COL_TEXT:
             return
 
         seg = self._get_segment_for_row(row)
         if seg is None:
             return
 
-        item = self.table.item(row, COL_TEXT)
-        new_text = item.text().strip()
-        if new_text != seg.text:
-            seg.text = new_text
-            self.project.mark_dirty()
-            self.info_label.setText(f"Edited segment {seg.id} at {self.project.format_time(seg.start)}")
+        if col == COL_TEXT:
+            item = self.table.item(row, COL_TEXT)
+            new_text = item.text().strip()
+            if new_text != seg.text:
+                seg.text = new_text
+                self.project.mark_dirty()
+                self.info_label.setText(f"Edited segment {seg.id} at {self.project.format_time(seg.start)}")
+
+        elif col == COL_SPEAKER:
+            item = self.table.item(row, COL_SPEAKER)
+            new_name = item.text().strip()
+            if new_name:
+                # Find or create speaker
+                speaker_id = None
+                for s in self.project.speakers:
+                    if s.label == new_name:
+                        speaker_id = s.id
+                        break
+                if speaker_id is None:
+                    # Create new speaker
+                    colors = ["#4a9eff", "#ff6b6b", "#6bff6b", "#ffaa33", "#cc66ff", "#66ffcc"]
+                    color = colors[len(self.project.speakers) % len(colors)]
+                    speaker_id = f"speaker_{len(self.project.speakers) + 1:02d}"
+                    self.project.speakers.append(Speaker(speaker_id, new_name, color))
+
+                seg.speaker_id = speaker_id
+                self.project.mark_dirty()
+                # Refresh display to show sticky propagation
+                self._refresh_display_speakers()
+                self.info_label.setText(f"Speaker set to '{new_name}' from {self.project.format_time(seg.start)} onward")
 
     def _set_segment_type(self, row: int, seg_type: str):
         seg = self._get_segment_for_row(row)
@@ -331,6 +374,59 @@ class TranscribeTab(QWidget):
         self.project.mark_dirty()
         self._refresh_table()
 
+    def _set_background_change(self, row: int, bg_name: str):
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+        seg.background_change = bg_name
+        self.project.mark_dirty()
+        self._refresh_row(row)
+        self.info_label.setText(f"Background changes to '{bg_name}' at {self.project.format_time(seg.start)}")
+
+    def _set_background_image(self, row: int):
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose Background Image", "",
+            "Images (*.jpg *.jpeg *.png *.bmp *.webp);;All Files (*)"
+        )
+        if path:
+            seg.background_change = f"image:{path}"
+            self.project.mark_dirty()
+            self._refresh_row(row)
+            self.info_label.setText(f"Background image set at {self.project.format_time(seg.start)}")
+
+    def _clear_background_change(self, row: int):
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+        seg.background_change = ""
+        self.project.mark_dirty()
+        self._refresh_row(row)
+
+    def _refresh_display_speakers(self):
+        """Update the speaker column display to show sticky names."""
+        self._updating_table = True
+        current_speaker = ""
+        for i in range(self.table.rowCount()):
+            seg = self._get_segment_for_row(i)
+            if seg is None:
+                continue
+            if seg.speaker_id:
+                current_speaker = self.project.get_speaker_label(seg.speaker_id)
+            speaker_item = self.table.item(i, COL_SPEAKER)
+            if speaker_item:
+                if seg.speaker_id:
+                    speaker_item.setText(current_speaker)
+                    speaker_item.setForeground(QColor(160, 200, 255))
+                elif current_speaker:
+                    speaker_item.setText(f"  ({current_speaker})")
+                    speaker_item.setForeground(QColor(100, 100, 100))
+                else:
+                    speaker_item.setText("")
+        self._updating_table = False
+
     def _replay_current_segment(self):
         row = self.table.currentRow()
         if row < 0:
@@ -385,10 +481,19 @@ class TranscribeTab(QWidget):
         time_item.setFlags(time_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.table.setItem(row, COL_TIME, time_item)
 
-        # Speaker (not editable for now — M5 will add speaker assignment)
-        speaker_text = self.project.get_speaker_label(seg.speaker_id) if seg.speaker_id else ""
+        # Speaker (EDITABLE — double-click to type name, sticky forward)
+        seg_idx = self.project.segments.index(seg) if seg in self.project.segments else row
+        if seg.speaker_id:
+            speaker_text = self.project.get_speaker_label(seg.speaker_id)
+        else:
+            # Show inherited speaker in dim
+            inherited = self.project.get_effective_speaker_label(seg_idx)
+            speaker_text = f"  ({inherited})" if inherited else ""
         speaker_item = QTableWidgetItem(speaker_text)
-        speaker_item.setFlags(speaker_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if seg.speaker_id:
+            speaker_item.setForeground(QColor(160, 200, 255))
+        else:
+            speaker_item.setForeground(QColor(100, 100, 100))
         self.table.setItem(row, COL_SPEAKER, speaker_item)
 
         # Text (EDITABLE — double-click to edit)
@@ -404,6 +509,20 @@ class TranscribeTab(QWidget):
             type_item.setForeground(QColor(120, 120, 120))
         self.table.setItem(row, COL_TYPE, type_item)
 
+        # Background change indicator
+        bg_text = ""
+        if seg.background_change:
+            bg = seg.background_change
+            if bg.startswith("image:"):
+                bg_text = "\U0001f5bc " + Path(bg[6:]).name  # 🖼 + filename
+            else:
+                bg_text = "\u25cf " + bg  # ● + name
+        bg_item = QTableWidgetItem(bg_text)
+        bg_item.setFlags(bg_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if bg_text:
+            bg_item.setForeground(QColor(200, 180, 100))
+        self.table.setItem(row, COL_BG, bg_item)
+
         self._updating_table = False
 
     def _refresh_row(self, row: int):
@@ -412,6 +531,7 @@ class TranscribeTab(QWidget):
             return
         self._updating_table = True
         self.table.item(row, COL_TEXT).setText(seg.text)
+
         type_item = self.table.item(row, COL_TYPE)
         type_item.setText(seg.type.title())
         if seg.type == "singing":
@@ -420,6 +540,20 @@ class TranscribeTab(QWidget):
             type_item.setForeground(QColor(120, 120, 120))
         else:
             type_item.setForeground(QColor(208, 208, 208))
+
+        # Update BG column
+        bg_item = self.table.item(row, COL_BG)
+        if bg_item:
+            if seg.background_change:
+                bg = seg.background_change
+                if bg.startswith("image:"):
+                    bg_item.setText("\U0001f5bc " + Path(bg[6:]).name)
+                else:
+                    bg_item.setText("\u25cf " + bg)
+                bg_item.setForeground(QColor(200, 180, 100))
+            else:
+                bg_item.setText("")
+
         self._updating_table = False
 
     # --- File operations ---

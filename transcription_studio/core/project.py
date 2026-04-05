@@ -24,6 +24,7 @@ class Segment:
     words: list[Word] = field(default_factory=list)
     confidence: float = 0.0
     note: str = ""
+    background_change: str = ""  # empty = no change; filename or procedural name to switch to here
 
     @property
     def duration(self) -> float:
@@ -136,6 +137,7 @@ class TranscriptProject:
                 words=words,
                 confidence=seg_data.get("confidence", 0.0),
                 note=seg_data.get("note", ""),
+                background_change=seg_data.get("background_change", ""),
             )
             self.segments.append(seg)
 
@@ -157,6 +159,8 @@ class TranscriptProject:
             d["confidence"] = seg.confidence
         if seg.note:
             d["note"] = seg.note
+        if seg.background_change:
+            d["background_change"] = seg.background_change
         return d
 
     def get_speaker_label(self, speaker_id: str) -> str:
@@ -172,6 +176,25 @@ class TranscriptProject:
             if seg.start <= time_seconds < seg.end:
                 return seg
         return None
+
+    def get_effective_speaker(self, segment_index: int) -> str:
+        """Get the effective speaker for a segment — sticky from last assignment."""
+        for i in range(segment_index, -1, -1):
+            if i < len(self.segments) and self.segments[i].speaker_id:
+                return self.segments[i].speaker_id
+        return ""
+
+    def get_effective_speaker_label(self, segment_index: int) -> str:
+        """Get display name of the effective speaker at a segment index."""
+        sid = self.get_effective_speaker(segment_index)
+        return self.get_speaker_label(sid) if sid else ""
+
+    def get_effective_background(self, segment_index: int) -> str:
+        """Get the effective background at a segment — sticky from last change."""
+        for i in range(segment_index, -1, -1):
+            if i < len(self.segments) and self.segments[i].background_change:
+                return self.segments[i].background_change
+        return ""
 
     def format_time(self, seconds: float) -> str:
         """Format seconds as MM:SS.ss or H:MM:SS.ss."""

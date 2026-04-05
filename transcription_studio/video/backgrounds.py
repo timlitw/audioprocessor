@@ -39,16 +39,16 @@ class WarmBokeh(Background):
                 "x": rng.uniform(-0.1, 1.1),
                 "y": rng.uniform(-0.1, 1.1),
                 "radius": rng.uniform(0.04, 0.15),
-                # Very slow drift — barely perceptible
-                "speed_x": rng.uniform(-0.001, 0.001),
-                "speed_y": rng.uniform(-0.0008, 0.0008),
-                # Gentle breathing pulse
-                "pulse_speed": rng.uniform(0.1, 0.3),
+                # Slow but visible drift
+                "speed_x": rng.uniform(-0.006, 0.006),
+                "speed_y": rng.uniform(-0.004, 0.004),
+                # Visible breathing pulse
+                "pulse_speed": rng.uniform(0.3, 0.7),
                 "pulse_phase": rng.uniform(0, math.tau),
-                # Gentle alpha breathing
+                # Visible alpha breathing
                 "alpha_base": rng.randint(20, 55),
-                "alpha_pulse": rng.randint(5, 15),
-                "alpha_speed": rng.uniform(0.08, 0.2),
+                "alpha_pulse": rng.randint(8, 20),
+                "alpha_speed": rng.uniform(0.2, 0.5),
                 "alpha_phase": rng.uniform(0, math.tau),
                 "color": (r, g, b),
             })
@@ -63,9 +63,9 @@ class WarmBokeh(Background):
         painter.setPen(Qt.PenStyle.NoPen)
 
         for orb in self._orbs:
-            # Very slow drift with gentle sine wobble
-            wobble_x = math.sin(time_seconds * 0.05 + orb["pulse_phase"]) * 0.01
-            wobble_y = math.cos(time_seconds * 0.04 + orb["alpha_phase"]) * 0.008
+            # Gentle sine wobble adds organic feel to the drift
+            wobble_x = math.sin(time_seconds * 0.15 + orb["pulse_phase"]) * 0.02
+            wobble_y = math.cos(time_seconds * 0.12 + orb["alpha_phase"]) * 0.015
             x = (orb["x"] + orb["speed_x"] * time_seconds + wobble_x) % 1.3 - 0.15
             y = (orb["y"] + orb["speed_y"] * time_seconds + wobble_y) % 1.3 - 0.15
 

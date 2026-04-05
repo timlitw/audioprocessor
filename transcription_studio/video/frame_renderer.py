@@ -84,7 +84,7 @@ class FrameRenderer:
         return self._bg_cache[effective_bg]
 
     def _render_speaker_name(self, painter: QPainter, seg: Segment, time_seconds: float):
-        """Show speaker name at top center when speaker changes. Uses sticky lookup."""
+        """Show speaker name at top center — stays visible the entire time that speaker is active."""
         # Find the effective speaker (sticky from last assignment)
         seg_idx = self.project.segments.index(seg) if seg in self.project.segments else -1
         speaker_id = self.project.get_effective_speaker(seg_idx) if seg_idx >= 0 else seg.speaker_id
@@ -92,23 +92,12 @@ class FrameRenderer:
         if not speaker_id:
             return
 
-        # Detect speaker change
-        if speaker_id != self._last_speaker_id:
-            self._last_speaker_id = speaker_id
-            self._speaker_fade_time = time_seconds
-
-        # Show for 3 seconds after change, then fade
-        elapsed = time_seconds - self._speaker_fade_time
-        if elapsed > 4.0:
-            return
-
-        alpha = 255
-        if elapsed > 3.0:
-            alpha = int(255 * (4.0 - elapsed))
-
         label = self.project.get_speaker_label(speaker_id)
         if not label:
             return
+
+        # Always show the current speaker name — full alpha
+        alpha = 255
 
         speaker_color = QColor(255, 255, 255, alpha)
         for s in self.project.speakers:
@@ -117,17 +106,18 @@ class FrameRenderer:
                 speaker_color = QColor(c.red(), c.green(), c.blue(), alpha)
                 break
 
-        font = QFont("Segoe UI", max(20, self.height // 35))
+        font = QFont("Segoe UI", max(18, self.height // 35))
         font.setWeight(QFont.Weight.Bold)
         painter.setFont(font)
 
-        rect = QRectF(0, self.height * 0.04, self.width, self.height * 0.06)
+        # Taller rect with more top padding so text isn't clipped
+        rect = QRectF(0, self.height * 0.02, self.width, self.height * 0.10)
 
-        # Outline
-        painter.setPen(QColor(0, 0, 0, min(alpha, 200)))
-        for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, 2), (2, 0)]:
+        # Outline for readability
+        painter.setPen(QColor(0, 0, 0, 200))
+        for dx, dy in [(-2, -2), (2, -2), (-2, 2), (2, 2), (0, 2), (2, 0), (0, -2), (-2, 0)]:
             offset_rect = QRectF(rect.x() + dx, rect.y() + dy, rect.width(), rect.height())
-            painter.drawText(offset_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, label)
+            painter.drawText(offset_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
 
         painter.setPen(speaker_color)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, label)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)

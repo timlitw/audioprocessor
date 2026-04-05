@@ -28,13 +28,16 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         self.transcribe_tab = TranscribeTab(self.project, self.playback)
-        self.video_tab = VideoTab(self.project)
+        self.video_tab = VideoTab(self.project, self.playback)
 
         self.tabs.addTab(self.transcribe_tab, "Transcribe")
         self.tabs.addTab(self.video_tab, "Video")
 
         # Wire signals
         self.transcribe_tab.project_changed.connect(self._on_project_changed)
+
+        # When audio is loaded in transcribe tab, share it with video tab
+        self.transcribe_tab.audio_loaded = self._on_audio_loaded
 
         self._build_menus()
         self._build_shortcuts()
@@ -76,9 +79,26 @@ class MainWindow(QMainWindow):
 
     def _build_shortcuts(self):
         space = QShortcut(Qt.Key.Key_Space, self)
-        space.activated.connect(self.transcribe_tab._toggle_play)
+        space.activated.connect(self._on_space)
+
+    def _on_space(self):
+        """Space bar — play/pause in whichever tab is active."""
+        if self.tabs.currentWidget() == self.video_tab:
+            self.video_tab._toggle_preview()
+        else:
+            self.transcribe_tab._toggle_play()
+
+    def _on_audio_loaded(self, data, sample_rate):
+        """Called when transcribe tab loads audio — share with video tab."""
+        self.video_tab.set_audio(data, sample_rate)
 
     def _on_project_changed(self):
+        # Share audio data with video tab if available
+        if self.transcribe_tab._audio_data is not None:
+            self.video_tab.set_audio(
+                self.transcribe_tab._audio_data,
+                self.project.audio_sample_rate,
+            )
         self.video_tab.refresh_project()
         title = "Transcription Studio"
         if self.project.audio_file:

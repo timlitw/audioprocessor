@@ -1,5 +1,6 @@
-"""Video tab — background picker, text style, preview, render to MP4."""
+"""Video tab — background picker, text style, preview with audio, render to MP4."""
 
+import numpy as np
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
@@ -9,6 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap
 
+from audio.playback import PlaybackEngine
 from core.project import TranscriptProject
 from video.frame_renderer import FrameRenderer
 from video.render_worker import RenderWorker, RESOLUTIONS
@@ -17,20 +19,25 @@ from video.text_styles import ALL_TEXT_STYLES
 
 
 class VideoTab(QWidget):
-    """Video generation workspace — preview and render."""
+    """Video generation workspace — preview with audio and render."""
 
-    def __init__(self, project: TranscriptProject, parent=None):
+    def __init__(self, project: TranscriptProject, playback: PlaybackEngine, parent=None):
         super().__init__(parent)
         self.project = project
+        self.playback = playback
         self._renderer: FrameRenderer | None = None
         self._preview_timer = QTimer(self)
         self._preview_timer.setInterval(33)  # ~30 fps
         self._preview_timer.timeout.connect(self._update_preview)
-        self._preview_time: float = 0.0
         self._previewing: bool = False
         self._render_worker: RenderWorker | None = None
+        self._audio_data: np.ndarray | None = None
 
         self._build_ui()
+
+        # Listen to playback position for synced preview
+        self.playback.position_changed.connect(self._on_playback_position)
+        self.playback.playback_finished.connect(self._on_playback_finished)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -50,31 +57,30 @@ class VideoTab(QWidget):
         # Settings row
         settings_row = QHBoxLayout()
 
-        # Background picker
         bg_group = QGroupBox("Background")
         bg_layout = QVBoxLayout(bg_group)
         self.bg_combo = QComboBox()
         for cls in ALL_BACKGROUNDS:
             self.bg_combo.addItem(cls.name)
+        self.bg_combo.currentIndexChanged.connect(self._on_settings_changed)
         bg_layout.addWidget(self.bg_combo)
         settings_row.addWidget(bg_group)
 
-        # Text style picker
         style_group = QGroupBox("Text Style")
         style_layout = QVBoxLayout(style_group)
         self.style_combo = QComboBox()
         for cls in ALL_TEXT_STYLES:
             self.style_combo.addItem(cls.name)
+        self.style_combo.currentIndexChanged.connect(self._on_settings_changed)
         style_layout.addWidget(self.style_combo)
         settings_row.addWidget(style_group)
 
-        # Resolution picker
         res_group = QGroupBox("Resolution")
         res_layout = QVBoxLayout(res_group)
         self.res_combo = QComboBox()
         for key in RESOLUTIONS:
             self.res_combo.addItem(key)
-        self.res_combo.setCurrentIndex(1)  # default 1080p
+        self.res_combo.setCurrentIndex(1)  # 1080p
         res_layout.addWidget(self.res_combo)
         settings_row.addWidget(res_group)
 
@@ -88,14 +94,14 @@ class VideoTab(QWidget):
         self.progress.setTextVisible(True)
         bottom_row.addWidget(self.progress, 1)
 
-        self.btn_preview = QPushButton("Preview")
+        self.btn_preview = QPushButton("\u25b6 Preview with Audio")
         self.btn_preview.setEnabled(False)
         self.btn_preview.clicked.connect(self._toggle_preview)
         bottom_row.addWidget(self.btn_preview)
 
         self.btn_snapshot = QPushButton("Snapshot")
         self.btn_snapshot.setEnabled(False)
-        self.btn_snapshot.setToolTip("Show a single frame at the 1-minute mark")
+        self.btn_snapshot.setToolTip("Show a single frame from the first speech segment")
         self.btn_snapshot.clicked.connect(self._show_snapshot)
         bottom_row.addWidget(self.btn_snapshot)
 
@@ -109,33 +115,40 @@ class VideoTab(QWidget):
 
         layout.addLayout(bottom_row)
 
+    def set_audio(self, data: np.ndarray, sample_rate: int):
+        """Called when audio is loaded in the Transcribe tab."""
+        self._audio_data = data
+        self.playback.set_audio(data, sample_rate)
+
     def refresh_project(self):
         """Called when project data changes."""
         has_segments = len(self.project.segments) > 0
-        self.btn_preview.setEnabled(has_segments)
+        self.btn_preview.setEnabled(has_segments and self._audio_data is not None)
         self.btn_snapshot.setEnabled(has_segments)
         self.btn_render.setEnabled(has_segments)
         if has_segments:
             n = len(self.project.segments)
-            self.preview_label.setText(f"{n} segments ready.\nClick Snapshot to preview a frame, or Render MP4.")
+            self.preview_label.setText(f"{n} segments ready.\nClick Preview to see and hear it, or Render MP4.")
+        self._renderer = None  # force recreate on next use
+
+    def _on_settings_changed(self):
+        """Recreate renderer when background or text style changes."""
+        self._renderer = None
 
     def _create_renderer(self, width: int = 640, height: int = 360) -> FrameRenderer:
-        """Create a renderer at preview resolution."""
         return FrameRenderer(
             self.project, width, height,
             self.bg_combo.currentText(),
             self.style_combo.currentText(),
         )
 
-    # --- Preview ---
+    # --- Snapshot ---
 
     def _show_snapshot(self):
-        """Render a single frame at a representative timestamp."""
         if not self.project.segments:
             return
 
-        # Show a frame from the first speech segment
-        t = 60.0  # default to 1 minute
+        t = 60.0
         for seg in self.project.segments:
             if seg.type == "speech" and seg.text.strip():
                 t = (seg.start + seg.end) / 2
@@ -151,6 +164,8 @@ class VideoTab(QWidget):
         )
         self.preview_label.setPixmap(scaled)
 
+    # --- Preview with audio ---
+
     def _toggle_preview(self):
         if self._previewing:
             self._stop_preview()
@@ -158,29 +173,43 @@ class VideoTab(QWidget):
             self._start_preview()
 
     def _start_preview(self):
-        if not self.project.segments:
+        if not self.project.segments or self._audio_data is None:
             return
+
         self._renderer = self._create_renderer(640, 360)
-        # Start from the first speech segment
-        self._preview_time = 0.0
+
+        # Find first speech segment to start from
+        start_time = 0.0
         for seg in self.project.segments:
             if seg.type == "speech":
-                self._preview_time = seg.start
+                start_time = seg.start
                 break
+
+        # Start audio playback
+        self.playback.play(start_time)
+
         self._previewing = True
-        self.btn_preview.setText("Stop Preview")
+        self.btn_preview.setText("\u23f9 Stop Preview")
         self._preview_timer.start()
 
     def _stop_preview(self):
         self._preview_timer.stop()
+        self.playback.stop()
         self._previewing = False
-        self.btn_preview.setText("Preview")
+        self.btn_preview.setText("\u25b6 Preview with Audio")
+
+    def _on_playback_position(self, seconds: float):
+        """Sync preview frame to audio playback position."""
+        # Only render if we're in preview mode and on the Video tab
+        pass  # actual rendering happens in _update_preview via timer
 
     def _update_preview(self):
-        if self._renderer is None:
+        """Render a frame at the current audio playback position."""
+        if self._renderer is None or not self._previewing:
             return
 
-        image = self._renderer.render_frame(self._preview_time)
+        current_time = self.playback.position_seconds
+        image = self._renderer.render_frame(current_time)
         pixmap = QPixmap.fromImage(image)
         scaled = pixmap.scaled(
             self.preview_label.size(),
@@ -189,8 +218,8 @@ class VideoTab(QWidget):
         )
         self.preview_label.setPixmap(scaled)
 
-        self._preview_time += 1.0 / 30.0  # advance ~1 frame
-        if self._preview_time >= self.project.audio_duration:
+    def _on_playback_finished(self):
+        if self._previewing:
             self._stop_preview()
 
     # --- Render ---
@@ -199,7 +228,6 @@ class VideoTab(QWidget):
         if not self.project.segments:
             return
 
-        # Choose output path
         default_name = Path(self.project.audio_file).stem + ".mp4"
         default_dir = self.project.project_dir
         output_path, _ = QFileDialog.getSaveFileName(

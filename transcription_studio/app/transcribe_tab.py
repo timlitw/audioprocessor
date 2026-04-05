@@ -1,18 +1,19 @@
-"""Transcribe tab — audio loading, transcription controls, transcript display."""
+"""Transcribe tab — audio loading, transcription controls, editable transcript."""
 
 import sys
 import numpy as np
-import soundfile as sf
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QComboBox, QListWidget, QListWidgetItem, QSplitter, QFileDialog,
-    QProgressBar, QGroupBox, QApplication,
+    QComboBox, QTableWidget, QTableWidgetItem, QSplitter, QFileDialog,
+    QProgressBar, QGroupBox, QApplication, QHeaderView, QMenu,
+    QAbstractItemView, QMessageBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QShortcut, QKeySequence
 
 from audio.playback import PlaybackEngine
-from core.project import TranscriptProject, Segment
+from core.project import TranscriptProject, Segment, Word
 from core.settings import get_last_directory, set_last_directory
 
 # Reuse file_io from audio_processor (parent project)
@@ -24,26 +25,34 @@ _spec.loader.exec_module(_file_io)
 load_audio = _file_io.load_audio
 FILE_FILTER = _file_io.FILE_FILTER
 
+# Table column indices
+COL_TIME = 0
+COL_SPEAKER = 1
+COL_TEXT = 2
+COL_TYPE = 3
+
 
 class TranscribeTab(QWidget):
-    """Main transcription workspace."""
+    """Main transcription workspace with editable transcript table."""
 
-    project_changed = pyqtSignal()  # emitted when project data changes
+    project_changed = pyqtSignal()
 
     def __init__(self, project: TranscriptProject, playback: PlaybackEngine, parent=None):
         super().__init__(parent)
         self.project = project
         self.playback = playback
         self._audio_data: np.ndarray | None = None
+        self._updating_table: bool = False  # flag to prevent edit loops
 
         self._build_ui()
         self._connect_signals()
+        self._build_shortcuts()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        # --- Top bar: file info + controls ---
+        # --- Top bar ---
         top_bar = QHBoxLayout()
 
         self.btn_open = QPushButton("Open Audio")
@@ -58,7 +67,6 @@ class TranscribeTab(QWidget):
         self.file_label.setStyleSheet("color: #888; padding: 0 12px;")
         top_bar.addWidget(self.file_label, 1)
 
-        # Model selector
         top_bar.addWidget(QLabel("Model:"))
         self.model_combo = QComboBox()
         self.model_combo.addItems(["tiny", "base", "small", "medium"])
@@ -82,30 +90,60 @@ class TranscribeTab(QWidget):
         self.progress.setTextVisible(True)
         layout.addWidget(self.progress)
 
-        # --- Main area: splitter with transcript list + info panel ---
+        # --- Main area: transcript table + info panel ---
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Transcript segment list
-        self.segment_list = QListWidget()
-        self.segment_list.setAlternatingRowColors(True)
-        self.segment_list.setStyleSheet("""
-            QListWidget { font-family: 'Segoe UI', sans-serif; font-size: 13px; }
-            QListWidget::item { padding: 6px 8px; border-bottom: 1px solid #333; }
-            QListWidget::item:selected { background: #3a5a8a; }
-        """)
-        splitter.addWidget(self.segment_list)
+        # Transcript table
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Time", "Speaker", "Text", "Type"])
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setWordWrap(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
 
-        # Info / speaker panel (placeholder for M4/M5)
-        info_panel = QGroupBox("Info")
+        # Column sizing
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(COL_TIME, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_SPEAKER, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_TEXT, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COL_TYPE, QHeaderView.ResizeMode.ResizeToContents)
+
+        self.table.setStyleSheet("""
+            QTableWidget {
+                font-family: 'Segoe UI', sans-serif; font-size: 13px;
+                gridline-color: #333;
+            }
+            QTableWidget::item { padding: 4px 6px; }
+            QTableWidget::item:selected { background: #3a5a8a; }
+            QHeaderView::section {
+                background: #333; color: #aaa; padding: 4px 8px;
+                border: none; border-bottom: 1px solid #555;
+            }
+        """)
+        splitter.addWidget(self.table)
+
+        # Info panel
+        info_panel = QGroupBox("Segment Info")
         info_layout = QVBoxLayout(info_panel)
-        self.info_label = QLabel("Load an audio file and click Transcribe to begin.")
+        self.info_label = QLabel(
+            "Load an audio file and click Transcribe.\n\n"
+            "After transcription:\n"
+            "- Click a row to play that segment\n"
+            "- Double-click the Text column to edit\n"
+            "- Right-click for more options\n"
+            "- Tab = replay segment\n"
+            "- Enter = next segment"
+        )
         self.info_label.setWordWrap(True)
         self.info_label.setStyleSheet("color: #999;")
         info_layout.addWidget(self.info_label)
         info_layout.addStretch()
         splitter.addWidget(info_panel)
 
-        splitter.setSizes([600, 200])
+        splitter.setSizes([700, 200])
         layout.addWidget(splitter, 1)
 
         # --- Transport bar ---
@@ -137,7 +175,252 @@ class TranscribeTab(QWidget):
     def _connect_signals(self):
         self.playback.position_changed.connect(self._on_playback_position)
         self.playback.playback_finished.connect(self._on_playback_finished)
-        self.segment_list.itemClicked.connect(self._on_segment_clicked)
+        self.table.cellClicked.connect(self._on_cell_clicked)
+        self.table.cellChanged.connect(self._on_cell_changed)
+
+    def _build_shortcuts(self):
+        # Tab = replay current segment
+        tab_key = QShortcut(Qt.Key.Key_Tab, self.table)
+        tab_key.activated.connect(self._replay_current_segment)
+
+        # Enter = move to next segment and play it
+        enter_key = QShortcut(Qt.Key.Key_Return, self.table)
+        enter_key.activated.connect(self._next_segment)
+
+    # --- Context menu ---
+
+    def _show_context_menu(self, pos):
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background-color: #2b2b2b; color: #d0d0d0; border: 1px solid #555; }
+            QMenu::item:selected { background-color: #3d3d3d; }
+            QMenu::item:disabled { color: #666; }
+        """)
+
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+
+        act_play = menu.addAction(f"Play segment ({self.project.format_time(seg.start)})")
+        act_play.triggered.connect(lambda: self._play_segment(seg))
+
+        menu.addSeparator()
+
+        act_edit = menu.addAction("Edit text")
+        act_edit.triggered.connect(lambda: self.table.editItem(self.table.item(row, COL_TEXT)))
+
+        menu.addSeparator()
+
+        # Type submenu
+        type_menu = menu.addMenu("Set type")
+        for t in ["speech", "singing", "silence"]:
+            act = type_menu.addAction(t.title())
+            act.triggered.connect(lambda checked, typ=t: self._set_segment_type(row, typ))
+
+        menu.addSeparator()
+
+        act_split = menu.addAction("Split at midpoint")
+        act_split.triggered.connect(lambda: self._split_segment(row))
+
+        if row > 0:
+            act_merge_up = menu.addAction("Merge with previous")
+            act_merge_up.triggered.connect(lambda: self._merge_segments(row - 1, row))
+
+        if row < self.table.rowCount() - 1:
+            act_merge_down = menu.addAction("Merge with next")
+            act_merge_down.triggered.connect(lambda: self._merge_segments(row, row + 1))
+
+        menu.addSeparator()
+
+        act_delete = menu.addAction("Delete segment")
+        act_delete.triggered.connect(lambda: self._delete_segment(row))
+
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    # --- Segment editing ---
+
+    def _on_cell_changed(self, row: int, col: int):
+        """Handle inline edits to the text column."""
+        if self._updating_table:
+            return
+        if col != COL_TEXT:
+            return
+
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+
+        item = self.table.item(row, COL_TEXT)
+        new_text = item.text().strip()
+        if new_text != seg.text:
+            seg.text = new_text
+            self.project.mark_dirty()
+            self.info_label.setText(f"Edited segment {seg.id} at {self.project.format_time(seg.start)}")
+
+    def _set_segment_type(self, row: int, seg_type: str):
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+        seg.type = seg_type
+        if seg_type == "singing":
+            seg.text = seg.text or "[Singing]"
+        elif seg_type == "silence":
+            seg.text = "[Silence]"
+        self.project.mark_dirty()
+        self._refresh_row(row)
+
+    def _split_segment(self, row: int):
+        seg = self._get_segment_for_row(row)
+        if seg is None or seg.duration < 0.5:
+            return
+
+        mid_time = (seg.start + seg.end) / 2
+
+        # Split text roughly in half by words
+        words = seg.text.split()
+        mid_word = len(words) // 2
+        text1 = " ".join(words[:mid_word]) if mid_word > 0 else seg.text
+        text2 = " ".join(words[mid_word:]) if mid_word < len(words) else ""
+
+        # Create new segment
+        new_id = max(s.id for s in self.project.segments) + 1
+        new_seg = Segment(
+            id=new_id,
+            type=seg.type,
+            start=mid_time,
+            end=seg.end,
+            text=text2,
+            speaker_id=seg.speaker_id,
+        )
+
+        # Shorten original
+        seg.end = mid_time
+        seg.text = text1
+
+        # Insert into project
+        idx = self.project.segments.index(seg)
+        self.project.segments.insert(idx + 1, new_seg)
+        self.project.mark_dirty()
+
+        self._refresh_table()
+        self.table.selectRow(row)
+
+    def _merge_segments(self, row1: int, row2: int):
+        seg1 = self._get_segment_for_row(row1)
+        seg2 = self._get_segment_for_row(row2)
+        if seg1 is None or seg2 is None:
+            return
+
+        seg1.end = seg2.end
+        seg1.text = (seg1.text + " " + seg2.text).strip()
+        self.project.segments.remove(seg2)
+        self.project.mark_dirty()
+
+        self._refresh_table()
+        self.table.selectRow(row1)
+
+    def _delete_segment(self, row: int):
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+        self.project.segments.remove(seg)
+        self.project.mark_dirty()
+        self._refresh_table()
+
+    def _replay_current_segment(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        seg = self._get_segment_for_row(row)
+        if seg:
+            self._play_segment(seg)
+
+    def _next_segment(self):
+        row = self.table.currentRow()
+        next_row = row + 1
+        if next_row < self.table.rowCount():
+            self.table.selectRow(next_row)
+            seg = self._get_segment_for_row(next_row)
+            if seg:
+                self._play_segment(seg)
+
+    def _play_segment(self, seg: Segment):
+        self.playback.stop()
+        self.playback.play(seg.start, seg.end)
+        self.btn_play.setText("\u23f8 Pause")
+
+    # --- Table helpers ---
+
+    def _get_segment_for_row(self, row: int) -> Segment | None:
+        if row < 0 or row >= self.table.rowCount():
+            return None
+        item = self.table.item(row, COL_TIME)
+        if item is None:
+            return None
+        seg_id = item.data(Qt.ItemDataRole.UserRole)
+        for seg in self.project.segments:
+            if seg.id == seg_id:
+                return seg
+        return None
+
+    def _refresh_table(self):
+        self._updating_table = True
+        self.table.setRowCount(0)
+        for seg in self.project.segments:
+            self._add_segment_row(seg)
+        self._updating_table = False
+
+    def _add_segment_row(self, seg: Segment):
+        self._updating_table = True
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        # Time (not editable)
+        time_item = QTableWidgetItem(self.project.format_time(seg.start))
+        time_item.setData(Qt.ItemDataRole.UserRole, seg.id)
+        time_item.setFlags(time_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.table.setItem(row, COL_TIME, time_item)
+
+        # Speaker (not editable for now — M5 will add speaker assignment)
+        speaker_text = self.project.get_speaker_label(seg.speaker_id) if seg.speaker_id else ""
+        speaker_item = QTableWidgetItem(speaker_text)
+        speaker_item.setFlags(speaker_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.table.setItem(row, COL_SPEAKER, speaker_item)
+
+        # Text (EDITABLE — double-click to edit)
+        text_item = QTableWidgetItem(seg.text)
+        self.table.setItem(row, COL_TEXT, text_item)
+
+        # Type badge (not editable — use context menu)
+        type_item = QTableWidgetItem(seg.type.title())
+        type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if seg.type == "singing":
+            type_item.setForeground(QColor(0, 180, 180))
+        elif seg.type == "silence":
+            type_item.setForeground(QColor(120, 120, 120))
+        self.table.setItem(row, COL_TYPE, type_item)
+
+        self._updating_table = False
+
+    def _refresh_row(self, row: int):
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+        self._updating_table = True
+        self.table.item(row, COL_TEXT).setText(seg.text)
+        type_item = self.table.item(row, COL_TYPE)
+        type_item.setText(seg.type.title())
+        if seg.type == "singing":
+            type_item.setForeground(QColor(0, 180, 180))
+        elif seg.type == "silence":
+            type_item.setForeground(QColor(120, 120, 120))
+        else:
+            type_item.setForeground(QColor(208, 208, 208))
+        self._updating_table = False
 
     # --- File operations ---
 
@@ -164,11 +447,11 @@ class TranscribeTab(QWidget):
             self.btn_stop.setEnabled(True)
             self.btn_save.setEnabled(True)
             self._update_time(0.0)
+            self._refresh_table()
 
             set_last_directory(str(Path(path).parent))
             self.project_changed.emit()
         except Exception as e:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Failed to load:\n{e}")
         finally:
             QApplication.restoreOverrideCursor()
@@ -196,12 +479,11 @@ class TranscribeTab(QWidget):
             )
             self.btn_transcribe.setEnabled(self._audio_data is not None)
             self.btn_save.setEnabled(True)
-            self._refresh_segment_list()
+            self._refresh_table()
             self._update_time(0.0)
             set_last_directory(str(Path(path).parent))
             self.project_changed.emit()
         except Exception as e:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Failed to load project:\n{e}")
 
     def _save_project(self):
@@ -209,7 +491,6 @@ class TranscribeTab(QWidget):
             self.project.save()
             self.info_label.setText(f"Saved to {self.project.get_transcript_path()}")
         except Exception as e:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
 
     # --- Transcription ---
@@ -225,7 +506,10 @@ class TranscribeTab(QWidget):
         self.progress.setFormat(f"Loading {model_size} model...")
         self.info_label.setText(f"Transcribing with Whisper ({model_size})...")
 
-        # Import and run whisper worker
+        # Clear existing segments
+        self.project.segments.clear()
+        self._refresh_table()
+
         from transcription.whisper_worker import WhisperWorker
 
         self._whisper_worker = WhisperWorker(
@@ -243,8 +527,6 @@ class TranscribeTab(QWidget):
         self.progress.setFormat(msg)
 
     def _on_segment_ready(self, seg_dict: dict):
-        """Called as each segment is transcribed — update UI live."""
-        from core.project import Segment, Word
         words = [Word(w["word"], w["start"], w["end"]) for w in seg_dict.get("words", [])]
         seg = Segment(
             id=len(self.project.segments) + 1,
@@ -256,14 +538,16 @@ class TranscribeTab(QWidget):
             confidence=seg_dict.get("confidence", 0.0),
         )
         self.project.segments.append(seg)
-        self._add_segment_to_list(seg)
+        self._add_segment_row(seg)
+        # Auto-scroll to latest segment
+        self.table.scrollToBottom()
 
     def _on_transcribe_finished(self):
         self.progress.setVisible(False)
         self.btn_transcribe.setEnabled(True)
         self.project.mark_dirty()
         n = len(self.project.segments)
-        self.info_label.setText(f"Transcription complete: {n} segments found.")
+        self.info_label.setText(f"Transcription complete: {n} segments.\nDouble-click text to edit. Right-click for options.")
         self.file_label.setText(
             f"{self.project.audio_file}  |  {self.project.audio_duration / 60:.1f} min  |  {n} segments"
         )
@@ -273,50 +557,26 @@ class TranscribeTab(QWidget):
         self.progress.setVisible(False)
         self.btn_transcribe.setEnabled(True)
         self.info_label.setText(f"Error: {msg}")
-        from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Transcription Error", msg)
 
-    # --- Segment list ---
-
-    def _refresh_segment_list(self):
-        self.segment_list.clear()
-        for seg in self.project.segments:
-            self._add_segment_to_list(seg)
-
-    def _add_segment_to_list(self, seg: Segment):
-        time_str = self.project.format_time(seg.start)
-        speaker = self.project.get_speaker_label(seg.speaker_id) if seg.speaker_id else ""
-        prefix = f"[{time_str}]"
-        if speaker:
-            prefix += f" {speaker}:"
-        if seg.type == "singing":
-            text = f"{prefix} {seg.note or '[Singing]'}"
-        elif seg.type == "silence":
-            text = f"{prefix} [Silence]"
-        else:
-            text = f"{prefix} {seg.text}"
-
-        item = QListWidgetItem(text)
-        item.setData(Qt.ItemDataRole.UserRole, seg.id)
-
-        if seg.type == "singing":
-            item.setForeground(Qt.GlobalColor.darkCyan)
-        elif seg.type == "silence":
-            item.setForeground(Qt.GlobalColor.darkGray)
-
-        self.segment_list.addItem(item)
-
-    def _on_segment_clicked(self, item: QListWidgetItem):
-        seg_id = item.data(Qt.ItemDataRole.UserRole)
-        for seg in self.project.segments:
-            if seg.id == seg_id:
-                self.playback.seek(seg.start)
-                self._update_time(seg.start)
-                # Play this segment
-                self.playback.play(seg.start, seg.end)
-                break
-
     # --- Playback ---
+
+    def _on_cell_clicked(self, row: int, col: int):
+        seg = self._get_segment_for_row(row)
+        if seg:
+            self._update_time(seg.start)
+            dur = seg.end - seg.start
+            speaker = self.project.get_speaker_label(seg.speaker_id) if seg.speaker_id else "Unknown"
+            self.info_label.setText(
+                f"Segment {seg.id}\n"
+                f"Time: {self.project.format_time(seg.start)} — {self.project.format_time(seg.end)}\n"
+                f"Duration: {dur:.1f}s\n"
+                f"Speaker: {speaker}\n"
+                f"Type: {seg.type}\n"
+                f"Confidence: {seg.confidence:.2f}\n\n"
+                f"Click to select, double-click text to edit.\n"
+                f"Tab = replay, Enter = next segment."
+            )
 
     def _toggle_play(self):
         if self.playback.is_playing:
@@ -326,7 +586,13 @@ class TranscribeTab(QWidget):
             self.playback.play()
             self.btn_play.setText("\u23f8 Pause")
         else:
-            self.playback.play()
+            # Play from current segment or beginning
+            row = self.table.currentRow()
+            seg = self._get_segment_for_row(row) if row >= 0 else None
+            if seg:
+                self.playback.play(seg.start)
+            else:
+                self.playback.play()
             self.btn_play.setText("\u23f8 Pause")
 
     def _stop(self):
@@ -347,12 +613,10 @@ class TranscribeTab(QWidget):
         self.time_label.setText(f"{current} / {total}")
 
     def _highlight_current_segment(self, seconds: float):
-        """Highlight the segment at the current playback position."""
-        for i in range(self.segment_list.count()):
-            item = self.segment_list.item(i)
-            seg_id = item.data(Qt.ItemDataRole.UserRole)
-            for seg in self.project.segments:
-                if seg.id == seg_id and seg.start <= seconds < seg.end:
-                    self.segment_list.setCurrentItem(item)
-                    self.segment_list.scrollToItem(item)
-                    return
+        for i in range(self.table.rowCount()):
+            seg = self._get_segment_for_row(i)
+            if seg and seg.start <= seconds < seg.end:
+                if self.table.currentRow() != i:
+                    self.table.selectRow(i)
+                    self.table.scrollTo(self.table.model().index(i, 0))
+                return

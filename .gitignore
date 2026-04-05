@@ -1,0 +1,14 @@
+.env
+.tmp/
+data/
+credentials.json
+token.json
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+*.mp3
+*.wav
+*.flac
+*.ogg

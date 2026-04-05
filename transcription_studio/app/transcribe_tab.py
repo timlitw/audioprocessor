@@ -459,7 +459,7 @@ class TranscribeTab(QWidget):
     def _open_project(self):
         last_dir = get_last_directory()
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", last_dir, "Transcript Files (transcript.json);;All Files (*)"
+            self, "Open Project", last_dir, "Transcript Files (*.json);;All Files (*)"
         )
         if not path:
             return

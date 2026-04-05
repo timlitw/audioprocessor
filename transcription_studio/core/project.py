@@ -78,8 +78,9 @@ class TranscriptProject:
         return str(Path(self.project_dir) / self.audio_file)
 
     def get_transcript_path(self) -> str:
-        """Full path to transcript.json."""
-        return str(Path(self.project_dir) / "transcript.json")
+        """Full path to transcript file, named to match the audio file."""
+        stem = Path(self.audio_file).stem
+        return str(Path(self.project_dir) / f"{stem}.json")
 
     def save(self, path: str | None = None):
         """Save project to transcript.json."""

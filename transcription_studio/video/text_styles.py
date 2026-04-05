@@ -14,41 +14,42 @@ class TextStyle:
                text: str, words: list[dict] | None,
                segment_start: float, segment_end: float,
                current_time: float, is_singing: bool):
-        """Render transcript text onto the frame.
-
-        Args:
-            painter: QPainter for the frame
-            width, height: frame dimensions
-            text: full segment text
-            words: list of {"word", "start", "end"} or None
-            segment_start, segment_end: segment time bounds
-            current_time: current playback time
-            is_singing: True if this is a singing segment
-        """
         raise NotImplementedError
 
-    def _draw_text_with_shadow(self, painter: QPainter, x: int, y: int, text: str,
-                                font: QFont, color: QColor, shadow_offset: int = 2):
-        """Draw text with a dark shadow for readability."""
-        painter.setFont(font)
-        # Shadow
-        painter.setPen(QColor(0, 0, 0, 180))
-        painter.drawText(x + shadow_offset, y + shadow_offset, text)
-        # Main text
-        painter.setPen(color)
-        painter.drawText(x, y, text)
+    def _fit_font_size(self, painter: QPainter, text: str, max_width: int,
+                        max_height: int, font_name: str, max_size: int, min_size: int = 16) -> QFont:
+        """Find the largest font size that fits the text in the given area."""
+        for size in range(max_size, min_size - 1, -2):
+            font = QFont(font_name, size)
+            font.setWeight(QFont.Weight.Medium)
+            painter.setFont(font)
+            fm = QFontMetrics(font)
+            bounding = fm.boundingRect(
+                QRectF(0, 0, max_width, max_height).toRect(),
+                Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter,
+                text,
+            )
+            if bounding.height() <= max_height and bounding.width() <= max_width + 10:
+                return font
+        font = QFont(font_name, min_size)
+        font.setWeight(QFont.Weight.Medium)
+        return font
 
     def _draw_text_centered(self, painter: QPainter, rect: QRectF, text: str,
                              font: QFont, color: QColor, shadow_offset: int = 2):
         painter.setFont(font)
-        # Shadow
-        shadow_rect = QRectF(rect.x() + shadow_offset, rect.y() + shadow_offset,
-                              rect.width(), rect.height())
-        painter.setPen(QColor(0, 0, 0, 180))
-        painter.drawText(shadow_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+        flags = Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap
+
+        # Draw shadow/outline for readability (multiple offsets for thickness)
+        shadow_color = QColor(0, 0, 0, min(color.alpha(), 200))
+        painter.setPen(shadow_color)
+        for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, 2), (2, 0), (0, -2), (-2, 0)]:
+            offset_rect = QRectF(rect.x() + dx, rect.y() + dy, rect.width(), rect.height())
+            painter.drawText(offset_rect, flags, text)
+
         # Main text
         painter.setPen(color)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+        painter.drawText(rect, flags, text)
 
 
 class SentenceAtATime(TextStyle):
@@ -58,8 +59,6 @@ class SentenceAtATime(TextStyle):
 
     def render(self, painter, width, height, text, words,
                segment_start, segment_end, current_time, is_singing):
-        font = QFont("Segoe UI", max(28, height // 25))
-        font.setWeight(QFont.Weight.Medium)
 
         # Fade in/out at segment boundaries
         fade_duration = 0.4
@@ -78,8 +77,14 @@ class SentenceAtATime(TextStyle):
         else:
             color = QColor(255, 255, 255, alpha)
 
-        margin = width * 0.1
-        rect = QRectF(margin, height * 0.35, width - 2 * margin, height * 0.3)
+        margin = width * 0.08
+        text_width = int(width - 2 * margin)
+        text_height = int(height * 0.5)
+        max_font = max(24, height // 22)
+
+        font = self._fit_font_size(painter, text, text_width, text_height, "Segoe UI", max_font)
+
+        rect = QRectF(margin, height * 0.2, text_width, text_height)
         self._draw_text_centered(painter, rect, text, font, color)
 
 
@@ -90,7 +95,6 @@ class SubtitleStyle(TextStyle):
 
     def render(self, painter, width, height, text, words,
                segment_start, segment_end, current_time, is_singing):
-        font = QFont("Segoe UI", max(24, height // 30))
 
         if is_singing:
             color = QColor(100, 200, 220)
@@ -98,15 +102,29 @@ class SubtitleStyle(TextStyle):
         else:
             color = QColor(255, 255, 255)
 
-        margin = width * 0.08
-        box_height = height * 0.12
-        rect = QRectF(margin, height - box_height - height * 0.06,
-                       width - 2 * margin, box_height)
+        margin = width * 0.06
+        text_width = int(width - 2 * margin)
+        max_text_height = int(height * 0.2)
+        max_font = max(20, height // 28)
+
+        font = self._fit_font_size(painter, text, text_width, max_text_height, "Segoe UI", max_font)
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+
+        # Measure actual text height to size the background box
+        bounding = fm.boundingRect(
+            QRectF(0, 0, text_width, max_text_height).toRect(),
+            Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter,
+            text,
+        )
+        actual_height = bounding.height() + 20  # padding
+
+        y_top = height - actual_height - height * 0.05
+        rect = QRectF(margin, y_top, text_width, actual_height)
 
         # Semi-transparent background box
-        bg_rect = QRectF(rect.x() - 10, rect.y() - 5,
-                          rect.width() + 20, rect.height() + 10)
-        painter.fillRect(bg_rect, QColor(0, 0, 0, 140))
+        bg_rect = QRectF(rect.x() - 12, rect.y() - 6, rect.width() + 24, rect.height() + 12)
+        painter.fillRect(bg_rect, QColor(0, 0, 0, 160))
 
         self._draw_text_centered(painter, rect, text, font, color, shadow_offset=1)
 
@@ -118,18 +136,17 @@ class WordByWordHighlight(TextStyle):
 
     def render(self, painter, width, height, text, words,
                segment_start, segment_end, current_time, is_singing):
-        font = QFont("Segoe UI", max(28, height // 25))
-        font.setWeight(QFont.Weight.Medium)
-        fm = QFontMetrics(font)
-        painter.setFont(font)
 
         if is_singing or not words:
-            # Fall back to sentence style for singing or missing word data
+            # Fall back to sentence style
             color = QColor(100, 200, 220) if is_singing else QColor(255, 255, 255)
             if is_singing:
                 text = f"\u266b {text} \u266b"
-            margin = width * 0.1
-            rect = QRectF(margin, height * 0.35, width - 2 * margin, height * 0.3)
+            margin = width * 0.08
+            text_width = int(width - 2 * margin)
+            max_font = max(24, height // 22)
+            font = self._fit_font_size(painter, text, text_width, int(height * 0.5), "Segoe UI", max_font)
+            rect = QRectF(margin, height * 0.2, text_width, height * 0.5)
             self._draw_text_centered(painter, rect, text, font, color)
             return
 
@@ -139,31 +156,64 @@ class WordByWordHighlight(TextStyle):
             if w["start"] <= current_time:
                 current_word_idx = i
 
-        # Draw all words, highlight the current one
+        # Auto-size font
+        margin = width * 0.08
+        text_width = int(width - 2 * margin)
+        max_font = max(24, height // 22)
+        font = self._fit_font_size(painter, text, text_width, int(height * 0.4), "Segoe UI", max_font)
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+
+        # Lay out words with word wrap
         word_texts = [w["word"] for w in words]
-        full_text = " ".join(word_texts)
-        total_width = fm.horizontalAdvance(full_text)
-        start_x = (width - total_width) / 2
-        y = int(height * 0.5)
+        space_width = fm.horizontalAdvance(" ")
 
-        # Shadow pass
-        x = start_x
-        for i, wt in enumerate(word_texts):
-            painter.setPen(QColor(0, 0, 0, 180))
-            painter.drawText(int(x) + 2, y + 2, wt)
-            x += fm.horizontalAdvance(wt + " ")
-
-        # Color pass
-        x = start_x
-        for i, wt in enumerate(word_texts):
-            if i == current_word_idx:
-                painter.setPen(QColor(255, 230, 50))  # bright yellow
-            elif i < current_word_idx:
-                painter.setPen(QColor(200, 200, 200, 200))  # already spoken
+        # Build lines
+        lines = []
+        current_line = []
+        current_line_width = 0
+        for wt in word_texts:
+            w_width = fm.horizontalAdvance(wt)
+            if current_line and current_line_width + space_width + w_width > text_width:
+                lines.append(current_line)
+                current_line = [wt]
+                current_line_width = w_width
             else:
-                painter.setPen(QColor(150, 150, 150, 120))  # upcoming
-            painter.drawText(int(x), y, wt)
-            x += fm.horizontalAdvance(wt + " ")
+                if current_line:
+                    current_line_width += space_width
+                current_line.append(wt)
+                current_line_width += w_width
+        if current_line:
+            lines.append(current_line)
+
+        line_height = fm.height() * 1.3
+        total_height = line_height * len(lines)
+        y_start = (height - total_height) / 2
+
+        word_idx = 0
+        for line_num, line_words in enumerate(lines):
+            line_text = " ".join(line_words)
+            line_width = fm.horizontalAdvance(line_text)
+            x = (width - line_width) / 2
+            y = y_start + line_num * line_height + fm.ascent()
+
+            for wt in line_words:
+                # Shadow
+                painter.setPen(QColor(0, 0, 0, 200))
+                for dx, dy in [(1, 1), (-1, 1), (1, -1), (-1, -1)]:
+                    painter.drawText(int(x) + dx, int(y) + dy, wt)
+
+                # Color based on position
+                if word_idx == current_word_idx:
+                    painter.setPen(QColor(255, 230, 50))  # bright yellow
+                elif word_idx < current_word_idx:
+                    painter.setPen(QColor(220, 220, 220))  # spoken
+                else:
+                    painter.setPen(QColor(140, 140, 140, 150))  # upcoming
+                painter.drawText(int(x), int(y), wt)
+
+                x += fm.horizontalAdvance(wt) + space_width
+                word_idx += 1
 
 
 class ScrollUp(TextStyle):
@@ -173,8 +223,6 @@ class ScrollUp(TextStyle):
 
     def render(self, painter, width, height, text, words,
                segment_start, segment_end, current_time, is_singing):
-        font = QFont("Segoe UI", max(24, height // 30))
-        painter.setFont(font)
 
         if is_singing:
             color = QColor(100, 200, 220)
@@ -187,20 +235,24 @@ class ScrollUp(TextStyle):
         if segment_end > segment_start:
             progress = (current_time - segment_start) / (segment_end - segment_start)
 
-        # Text starts at bottom, scrolls to center, then up
-        y_start = height * 0.75
-        y_end = height * 0.25
-        y = y_start + (y_end - y_start) * progress
+        # Text starts below center, scrolls above center
+        y_start = height * 0.6
+        y_end = height * 0.2
+        y_center = y_start + (y_end - y_start) * progress
 
-        margin = width * 0.1
-        rect = QRectF(margin, y - height * 0.05, width - 2 * margin, height * 0.15)
+        margin = width * 0.08
+        text_width = int(width - 2 * margin)
+        max_font = max(22, height // 26)
+        font = self._fit_font_size(painter, text, text_width, int(height * 0.3), "Segoe UI", max_font)
 
-        # Fade based on position
+        rect = QRectF(margin, y_center, text_width, height * 0.3)
+
+        # Fade based on vertical position
         alpha = 255
-        if y < height * 0.3:
-            alpha = int(255 * (y - height * 0.1) / (height * 0.2))
-        elif y > height * 0.7:
-            alpha = int(255 * (height * 0.9 - y) / (height * 0.2))
+        if y_center < height * 0.25:
+            alpha = int(255 * max(0, (y_center - height * 0.1)) / (height * 0.15))
+        elif y_center > height * 0.55:
+            alpha = int(255 * max(0, (height * 0.7 - y_center)) / (height * 0.15))
         alpha = max(0, min(255, alpha))
 
         color = QColor(color.red(), color.green(), color.blue(), alpha)

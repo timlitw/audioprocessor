@@ -12,3 +12,5 @@ build/
 *.wav
 *.flac
 *.ogg
+CLAUDE.md
+SETUP_GUIDE.md

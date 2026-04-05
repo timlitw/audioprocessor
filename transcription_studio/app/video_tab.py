@@ -14,7 +14,7 @@ from audio.playback import PlaybackEngine
 from core.project import TranscriptProject
 from video.frame_renderer import FrameRenderer
 from video.render_worker import RenderWorker, RESOLUTIONS
-from video.backgrounds import ALL_BACKGROUNDS
+from video.backgrounds import ALL_BACKGROUNDS, CustomImage
 from video.text_styles import ALL_TEXT_STYLES
 
 
@@ -32,6 +32,9 @@ class VideoTab(QWidget):
         self._previewing: bool = False
         self._render_worker: RenderWorker | None = None
         self._audio_data: np.ndarray | None = None
+        self._custom_bg: CustomImage | None = None
+        self._custom_image_paths: list[str] = []
+        self._slide_duration: float = 30.0
 
         self._build_ui()
 
@@ -62,8 +65,15 @@ class VideoTab(QWidget):
         self.bg_combo = QComboBox()
         for cls in ALL_BACKGROUNDS:
             self.bg_combo.addItem(cls.name)
-        self.bg_combo.currentIndexChanged.connect(self._on_settings_changed)
+        self.bg_combo.addItem("Custom Image(s)...")
+        self.bg_combo.currentIndexChanged.connect(self._on_bg_changed)
         bg_layout.addWidget(self.bg_combo)
+
+        self.bg_images_label = QLabel("")
+        self.bg_images_label.setStyleSheet("color: #888; font-size: 11px;")
+        self.bg_images_label.setVisible(False)
+        bg_layout.addWidget(self.bg_images_label)
+
         settings_row.addWidget(bg_group)
 
         style_group = QGroupBox("Text Style")
@@ -135,12 +145,45 @@ class VideoTab(QWidget):
         """Recreate renderer when background or text style changes."""
         self._renderer = None
 
+    def _on_bg_changed(self, index: int):
+        """Handle background combo change — open file picker for custom."""
+        self._renderer = None
+        is_custom = self.bg_combo.currentText() == "Custom Image(s)..."
+        if is_custom:
+            paths, _ = QFileDialog.getOpenFileNames(
+                self, "Select Background Image(s)",
+                "",
+                "Images (*.jpg *.jpeg *.png *.bmp *.webp);;All Files (*)"
+            )
+            if paths:
+                self._custom_image_paths = paths
+                self._custom_bg = CustomImage(paths, self._slide_duration)
+                count = len(paths)
+                if count == 1:
+                    name = Path(paths[0]).name
+                    self.bg_images_label.setText(f"  {name}")
+                else:
+                    self.bg_images_label.setText(f"  {count} images (slideshow, {self._slide_duration:.0f}s each)")
+                self.bg_images_label.setVisible(True)
+            else:
+                # User cancelled — revert to first option
+                self.bg_combo.setCurrentIndex(0)
+                self.bg_images_label.setVisible(False)
+        else:
+            self.bg_images_label.setVisible(False)
+            self._custom_bg = None
+
     def _create_renderer(self, width: int = 640, height: int = 360) -> FrameRenderer:
-        return FrameRenderer(
+        renderer = FrameRenderer(
             self.project, width, height,
             self.bg_combo.currentText(),
             self.style_combo.currentText(),
         )
+        # Use custom image background if selected
+        if self._custom_bg and self.bg_combo.currentText() == "Custom Image(s)...":
+            custom = CustomImage(self._custom_image_paths, self._slide_duration)
+            renderer.background = custom
+        return renderer
 
     # --- Snapshot ---
 
@@ -242,12 +285,15 @@ class VideoTab(QWidget):
         self.progress.setVisible(True)
         self.progress.setValue(0)
 
+        custom_paths = self._custom_image_paths if self._custom_bg else None
         self._render_worker = RenderWorker(
             project=self.project,
             output_path=output_path,
             background_name=self.bg_combo.currentText(),
             text_style_name=self.style_combo.currentText(),
             resolution_key=self.res_combo.currentText(),
+            custom_image_paths=custom_paths,
+            slide_duration=self._slide_duration,
         )
         self._render_worker.progress.connect(self._on_render_progress)
         self._render_worker.finished_render.connect(self._on_render_finished)

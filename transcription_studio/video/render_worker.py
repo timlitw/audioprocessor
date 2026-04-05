@@ -26,7 +26,10 @@ class RenderWorker(QThread):
 
     def __init__(self, project: TranscriptProject, output_path: str,
                  background_name: str, text_style_name: str,
-                 resolution_key: str, fps: int = 30, parent=None):
+                 resolution_key: str, fps: int = 30,
+                 custom_image_paths: list[str] | None = None,
+                 slide_duration: float = 30.0,
+                 parent=None):
         super().__init__(parent)
         self.project = project
         self.output_path = output_path
@@ -34,6 +37,8 @@ class RenderWorker(QThread):
         self.text_style_name = text_style_name
         self.resolution_key = resolution_key
         self.fps = fps
+        self.custom_image_paths = custom_image_paths
+        self.slide_duration = slide_duration
         self._cancelled = False
 
     def cancel(self):
@@ -55,6 +60,11 @@ class RenderWorker(QThread):
                 self.project, width, height,
                 self.background_name, self.text_style_name,
             )
+
+            # Use custom image background if provided
+            if self.custom_image_paths:
+                from video.backgrounds import CustomImage
+                renderer.background = CustomImage(self.custom_image_paths, self.slide_duration)
 
             frame_times = compute_frame_times(self.project.audio_duration, self.fps)
             total_frames = len(frame_times)

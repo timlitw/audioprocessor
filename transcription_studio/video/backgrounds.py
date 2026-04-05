@@ -167,10 +167,92 @@ class SolidDark(Background):
         painter.fillRect(0, 0, width, height, QColor(20, 20, 35))
 
 
+class CustomImage(Background):
+    """Single static image scaled to fill the frame."""
+
+    name = "Custom Image"
+
+    def __init__(self, image_paths: list[str] | None = None, slide_duration: float = 30.0):
+        self._images: list[QImage] = []
+        self._scaled_cache: dict[tuple, QImage] = {}
+        self._slide_duration = slide_duration  # seconds per image in slideshow mode
+
+        if image_paths:
+            for path in image_paths:
+                img = QImage(path)
+                if not img.isNull():
+                    self._images.append(img)
+
+    def set_images(self, image_paths: list[str], slide_duration: float = 30.0):
+        """Load images from file paths."""
+        self._images.clear()
+        self._scaled_cache.clear()
+        self._slide_duration = slide_duration
+        for path in image_paths:
+            img = QImage(path)
+            if not img.isNull():
+                self._images.append(img)
+
+    def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
+        if not self._images:
+            painter.fillRect(0, 0, width, height, QColor(20, 20, 35))
+            return
+
+        # Pick which image to show (slideshow rotation)
+        if len(self._images) == 1:
+            idx = 0
+        else:
+            idx = int(time_seconds / self._slide_duration) % len(self._images)
+
+        img = self._images[idx]
+
+        # Cache scaled version per resolution
+        cache_key = (idx, width, height)
+        if cache_key not in self._scaled_cache:
+            scaled = img.scaled(width, height,
+                                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                Qt.TransformationMode.SmoothTransformation)
+            # Center crop to exact size
+            x_offset = (scaled.width() - width) // 2
+            y_offset = (scaled.height() - height) // 2
+            cropped = scaled.copy(x_offset, y_offset, width, height)
+            self._scaled_cache[cache_key] = cropped
+
+        painter.drawImage(0, 0, self._scaled_cache[cache_key])
+
+        # Slight dark overlay so text is readable
+        painter.fillRect(0, 0, width, height, QColor(0, 0, 0, 60))
+
+        # If slideshow, add crossfade near transitions
+        if len(self._images) > 1:
+            position_in_slide = time_seconds % self._slide_duration
+            fade_duration = 1.0
+
+            if position_in_slide > self._slide_duration - fade_duration:
+                # Fade to next image
+                next_idx = (idx + 1) % len(self._images)
+                next_key = (next_idx, width, height)
+                if next_key not in self._scaled_cache:
+                    next_img = self._images[next_idx]
+                    scaled = next_img.scaled(width, height,
+                                             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                             Qt.TransformationMode.SmoothTransformation)
+                    x_off = (scaled.width() - width) // 2
+                    y_off = (scaled.height() - height) // 2
+                    self._scaled_cache[next_key] = scaled.copy(x_off, y_off, width, height)
+
+                fade_progress = (position_in_slide - (self._slide_duration - fade_duration)) / fade_duration
+                painter.setOpacity(fade_progress)
+                painter.drawImage(0, 0, self._scaled_cache[next_key])
+                painter.setOpacity(1.0)
+                painter.fillRect(0, 0, width, height, QColor(0, 0, 0, 60))
+
+
 # Need this import for NoPen
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage
 
-# Registry of all backgrounds
+# Registry of procedural backgrounds
 ALL_BACKGROUNDS = [WarmBokeh, Starfield, GradientSweep, Waves, SolidDark]
 
 def get_background(name: str) -> Background:

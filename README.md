@@ -10,4 +10,4 @@ This is an attempt to make a simple free audio processor that can do basic trim 
 find and take out background hum, ac noise, etc.
 
 play thru to find and make small cuts 
-maybe find the " I Do's" in a wedding and make them louder so they are audible
+maybe find the vows in a wedding or baptism and make them louder so they are audible

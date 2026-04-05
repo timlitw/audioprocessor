@@ -1,9 +1,9 @@
-"""Procedural background generators — render directly via QPainter."""
+"""Procedural background generators — soothing, cinematic animations."""
 
 import math
 import random
-from PyQt6.QtGui import QPainter, QColor, QRadialGradient, QLinearGradient, QPainterPath
-from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtGui import QPainter, QColor, QRadialGradient, QLinearGradient, QPainterPath, QImage
+from PyQt6.QtCore import QPointF, QRectF, Qt
 
 
 class Background:
@@ -16,11 +16,11 @@ class Background:
 
 
 class WarmBokeh(Background):
-    """Soft, out-of-focus light orbs drifting on a dark background."""
+    """Soft, out-of-focus light orbs drifting very slowly with gentle color breathing."""
 
     name = "Warm Bokeh"
 
-    def __init__(self, num_orbs: int = 35, seed: int = 42):
+    def __init__(self, num_orbs: int = 40, seed: int = 42):
         rng = random.Random(seed)
         self._orbs = []
         colors = [
@@ -30,85 +30,134 @@ class WarmBokeh(Background):
             (220, 100, 80),   # soft red
             (200, 160, 220),  # soft lavender
             (255, 160, 140),  # soft pink
+            (180, 140, 255),  # soft purple
+            (255, 220, 180),  # warm cream
         ]
         for _ in range(num_orbs):
             r, g, b = rng.choice(colors)
             self._orbs.append({
-                "x": rng.uniform(0, 1),
-                "y": rng.uniform(0, 1),
-                "radius": rng.uniform(0.03, 0.12),
-                "speed_x": rng.uniform(-0.005, 0.005),
-                "speed_y": rng.uniform(-0.003, 0.003),
-                "pulse_speed": rng.uniform(0.3, 0.8),
+                "x": rng.uniform(-0.1, 1.1),
+                "y": rng.uniform(-0.1, 1.1),
+                "radius": rng.uniform(0.04, 0.15),
+                # Very slow drift — barely perceptible
+                "speed_x": rng.uniform(-0.001, 0.001),
+                "speed_y": rng.uniform(-0.0008, 0.0008),
+                # Gentle breathing pulse
+                "pulse_speed": rng.uniform(0.1, 0.3),
                 "pulse_phase": rng.uniform(0, math.tau),
-                "alpha": rng.randint(15, 50),
+                # Gentle alpha breathing
+                "alpha_base": rng.randint(20, 55),
+                "alpha_pulse": rng.randint(5, 15),
+                "alpha_speed": rng.uniform(0.08, 0.2),
+                "alpha_phase": rng.uniform(0, math.tau),
                 "color": (r, g, b),
             })
 
     def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
-        painter.fillRect(0, 0, width, height, QColor(15, 10, 20))
+        # Slowly shifting background color
+        bg_shift = math.sin(time_seconds * 0.02) * 5
+        painter.fillRect(0, 0, width, height, QColor(
+            int(15 + bg_shift), int(10 + bg_shift * 0.5), int(22 + bg_shift)
+        ))
+
+        painter.setPen(Qt.PenStyle.NoPen)
 
         for orb in self._orbs:
-            # Drift position (wrapping)
-            x = (orb["x"] + orb["speed_x"] * time_seconds) % 1.2 - 0.1
-            y = (orb["y"] + orb["speed_y"] * time_seconds) % 1.2 - 0.1
+            # Very slow drift with gentle sine wobble
+            wobble_x = math.sin(time_seconds * 0.05 + orb["pulse_phase"]) * 0.01
+            wobble_y = math.cos(time_seconds * 0.04 + orb["alpha_phase"]) * 0.008
+            x = (orb["x"] + orb["speed_x"] * time_seconds + wobble_x) % 1.3 - 0.15
+            y = (orb["y"] + orb["speed_y"] * time_seconds + wobble_y) % 1.3 - 0.15
 
-            # Pulse size
-            pulse = 1.0 + 0.3 * math.sin(orb["pulse_speed"] * time_seconds + orb["pulse_phase"])
+            # Gentle size breathing
+            pulse = 1.0 + 0.15 * math.sin(orb["pulse_speed"] * time_seconds + orb["pulse_phase"])
             radius = orb["radius"] * pulse * min(width, height)
+
+            # Gentle alpha breathing
+            alpha = orb["alpha_base"] + int(orb["alpha_pulse"] *
+                    math.sin(orb["alpha_speed"] * time_seconds + orb["alpha_phase"]))
 
             cx = x * width
             cy = y * height
             r, g, b = orb["color"]
-            alpha = orb["alpha"]
 
             gradient = QRadialGradient(QPointF(cx, cy), radius)
             gradient.setColorAt(0.0, QColor(r, g, b, alpha))
-            gradient.setColorAt(0.5, QColor(r, g, b, alpha // 2))
+            gradient.setColorAt(0.3, QColor(r, g, b, int(alpha * 0.6)))
+            gradient.setColorAt(0.7, QColor(r, g, b, int(alpha * 0.2)))
             gradient.setColorAt(1.0, QColor(r, g, b, 0))
 
             painter.setBrush(gradient)
-            painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QPointF(cx, cy), radius, radius)
 
 
 class Starfield(Background):
-    """Drifting white particles on deep blue/black."""
+    """Gently twinkling stars drifting slowly on deep blue."""
 
     name = "Starfield"
 
-    def __init__(self, num_stars: int = 200, seed: int = 42):
+    def __init__(self, num_stars: int = 180, seed: int = 42):
         rng = random.Random(seed)
         self._stars = []
         for _ in range(num_stars):
             self._stars.append({
                 "x": rng.uniform(0, 1),
                 "y": rng.uniform(0, 1),
-                "size": rng.uniform(1, 3),
-                "speed": rng.uniform(0.002, 0.01),
-                "brightness": rng.randint(120, 255),
+                "size": rng.uniform(0.8, 2.5),
+                "speed": rng.uniform(0.0005, 0.003),  # very slow drift
+                "brightness": rng.randint(140, 255),
+                "twinkle_speed": rng.uniform(0.2, 0.8),
+                "twinkle_phase": rng.uniform(0, math.tau),
             })
 
     def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
-        painter.fillRect(0, 0, width, height, QColor(5, 5, 15))
+        # Slowly shifting deep blue background
+        blue_shift = math.sin(time_seconds * 0.015) * 3
+        painter.fillRect(0, 0, width, height, QColor(
+            int(5 + blue_shift), int(5 + blue_shift), int(18 + blue_shift * 2)
+        ))
+
+        painter.setPen(Qt.PenStyle.NoPen)
 
         for star in self._stars:
             x = (star["x"] + star["speed"] * time_seconds) % 1.0
             y = star["y"]
             b = star["brightness"]
 
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(b, b, int(b * 0.9), b))
-            painter.drawEllipse(QPointF(x * width, y * height), star["size"], star["size"])
+            # Gentle twinkling
+            twinkle = 0.6 + 0.4 * math.sin(star["twinkle_speed"] * time_seconds + star["twinkle_phase"])
+            alpha = int(b * twinkle)
+
+            # Slight warm tint variation
+            tint = math.sin(time_seconds * 0.03 + star["twinkle_phase"]) * 0.1
+            r_val = int(min(255, alpha * (1.0 + tint)))
+            g_val = int(min(255, alpha * (1.0 + tint * 0.5)))
+
+            color = QColor(r_val, g_val, alpha, alpha)
+            size = star["size"] * (0.8 + 0.2 * twinkle)
+
+            # Soft glow around brighter stars
+            if b > 200:
+                glow_radius = size * 3
+                glow = QRadialGradient(QPointF(x * width, y * height), glow_radius)
+                glow.setColorAt(0.0, QColor(r_val, g_val, alpha, int(alpha * 0.3)))
+                glow.setColorAt(1.0, QColor(r_val, g_val, alpha, 0))
+                painter.setBrush(glow)
+                painter.drawEllipse(QPointF(x * width, y * height), glow_radius, glow_radius)
+
+            painter.setBrush(color)
+            painter.drawEllipse(QPointF(x * width, y * height), size, size)
 
 
 class GradientSweep(Background):
-    """Slowly rotating color gradient."""
+    """Slowly morphing color gradient — soothing color transitions."""
 
     name = "Gradient Sweep"
 
     def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
-        angle = time_seconds * 0.05  # slow rotation
+        # Very slow rotation
+        angle = time_seconds * 0.015
+
         cx, cy = width / 2, height / 2
         r = max(width, height) * 0.8
 
@@ -117,34 +166,63 @@ class GradientSweep(Background):
         x2 = cx - r * math.cos(angle)
         y2 = cy - r * math.sin(angle)
 
+        # Colors slowly shift over time
+        t = time_seconds * 0.02
+        r1 = int(10 + 15 * math.sin(t))
+        g1 = int(15 + 10 * math.sin(t + 1.0))
+        b1 = int(50 + 20 * math.sin(t + 2.0))
+
+        r2 = int(30 + 20 * math.sin(t + 3.0))
+        g2 = int(15 + 15 * math.sin(t + 4.0))
+        b2 = int(60 + 25 * math.sin(t + 5.0))
+
+        r3 = int(10 + 10 * math.sin(t + 1.5))
+        g3 = int(10 + 8 * math.sin(t + 2.5))
+        b3 = int(35 + 15 * math.sin(t + 3.5))
+
         gradient = QLinearGradient(QPointF(x1, y1), QPointF(x2, y2))
-        gradient.setColorAt(0.0, QColor(10, 15, 50))
-        gradient.setColorAt(0.5, QColor(30, 15, 60))
-        gradient.setColorAt(1.0, QColor(10, 10, 35))
+        gradient.setColorAt(0.0, QColor(r1, g1, b1))
+        gradient.setColorAt(0.5, QColor(r2, g2, b2))
+        gradient.setColorAt(1.0, QColor(r3, g3, b3))
 
         painter.fillRect(0, 0, width, height, gradient)
 
+        # Add a subtle radial glow in the center
+        glow_alpha = int(20 + 10 * math.sin(time_seconds * 0.03))
+        center_glow = QRadialGradient(QPointF(cx, cy), max(width, height) * 0.4)
+        center_glow.setColorAt(0.0, QColor(60, 40, 80, glow_alpha))
+        center_glow.setColorAt(1.0, QColor(60, 40, 80, 0))
+        painter.fillRect(0, 0, width, height, center_glow)
+
 
 class Waves(Background):
-    """Sine wave animation, ocean palette."""
+    """Gentle ocean waves with slowly shifting colors."""
 
     name = "Waves"
 
     def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
-        painter.fillRect(0, 0, width, height, QColor(8, 15, 30))
+        # Slowly shifting dark ocean background
+        bg_shift = math.sin(time_seconds * 0.02) * 3
+        painter.fillRect(0, 0, width, height, QColor(
+            int(8 + bg_shift), int(15 + bg_shift), int(30 + bg_shift * 2)
+        ))
 
-        for layer in range(4):
-            y_base = height * (0.55 + layer * 0.1)
-            amplitude = 20 + layer * 10
-            freq = 0.005 - layer * 0.001
-            speed = 0.5 + layer * 0.2
-            alpha = 40 - layer * 8
+        for layer in range(5):
+            y_base = height * (0.50 + layer * 0.08)
+            amplitude = 15 + layer * 8
+            freq = 0.004 - layer * 0.0005
+            # Very slow wave motion
+            speed = 0.15 + layer * 0.08
+            alpha = 35 - layer * 5
+
+            # Color shifts slowly per layer
+            color_shift = math.sin(time_seconds * 0.025 + layer * 0.5) * 15
 
             path = QPainterPath()
-            path.moveTo(0, height)
-
-            for x in range(0, width + 2, 3):
-                y = y_base + amplitude * math.sin(freq * x + speed * time_seconds + layer)
+            for x in range(0, width + 3, 3):
+                y = y_base + amplitude * math.sin(freq * x + speed * time_seconds + layer * 0.7)
+                # Add a second harmonic for more organic feel
+                y += (amplitude * 0.3) * math.sin(freq * 2.3 * x + speed * 0.7 * time_seconds + layer)
                 if x == 0:
                     path.moveTo(x, y)
                 else:
@@ -154,28 +232,37 @@ class Waves(Background):
             path.lineTo(0, height)
             path.closeSubpath()
 
-            color = QColor(30 + layer * 15, 60 + layer * 20, 120 + layer * 20, alpha)
+            color = QColor(
+                int(25 + layer * 12 + color_shift),
+                int(55 + layer * 18 + color_shift * 0.5),
+                int(110 + layer * 18 + color_shift),
+                alpha,
+            )
             painter.fillPath(path, color)
 
 
 class SolidDark(Background):
-    """Plain dark background."""
+    """Plain dark background with very subtle color breathing."""
 
     name = "Solid Dark"
 
     def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
-        painter.fillRect(0, 0, width, height, QColor(20, 20, 35))
+        # Very subtle color shift so it doesn't feel dead
+        shift = math.sin(time_seconds * 0.015) * 3
+        painter.fillRect(0, 0, width, height, QColor(
+            int(20 + shift), int(20 + shift * 0.5), int(35 + shift)
+        ))
 
 
 class CustomImage(Background):
-    """Single static image scaled to fill the frame."""
+    """Static image or slideshow with crossfade transitions."""
 
     name = "Custom Image"
 
     def __init__(self, image_paths: list[str] | None = None, slide_duration: float = 30.0):
         self._images: list[QImage] = []
         self._scaled_cache: dict[tuple, QImage] = {}
-        self._slide_duration = slide_duration  # seconds per image in slideshow mode
+        self._slide_duration = slide_duration
 
         if image_paths:
             for path in image_paths:
@@ -184,7 +271,6 @@ class CustomImage(Background):
                     self._images.append(img)
 
     def set_images(self, image_paths: list[str], slide_duration: float = 30.0):
-        """Load images from file paths."""
         self._images.clear()
         self._scaled_cache.clear()
         self._slide_duration = slide_duration
@@ -193,64 +279,48 @@ class CustomImage(Background):
             if not img.isNull():
                 self._images.append(img)
 
+    def _get_scaled(self, idx: int, width: int, height: int) -> QImage:
+        cache_key = (idx, width, height)
+        if cache_key not in self._scaled_cache:
+            img = self._images[idx]
+            scaled = img.scaled(width, height,
+                                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                Qt.TransformationMode.SmoothTransformation)
+            x_offset = (scaled.width() - width) // 2
+            y_offset = (scaled.height() - height) // 2
+            self._scaled_cache[cache_key] = scaled.copy(x_offset, y_offset, width, height)
+        return self._scaled_cache[cache_key]
+
     def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
         if not self._images:
             painter.fillRect(0, 0, width, height, QColor(20, 20, 35))
             return
 
-        # Pick which image to show (slideshow rotation)
         if len(self._images) == 1:
-            idx = 0
-        else:
-            idx = int(time_seconds / self._slide_duration) % len(self._images)
+            painter.drawImage(0, 0, self._get_scaled(0, width, height))
+            painter.fillRect(0, 0, width, height, QColor(0, 0, 0, 50))
+            return
 
-        img = self._images[idx]
+        # Slideshow with smooth crossfade
+        idx = int(time_seconds / self._slide_duration) % len(self._images)
+        next_idx = (idx + 1) % len(self._images)
 
-        # Cache scaled version per resolution
-        cache_key = (idx, width, height)
-        if cache_key not in self._scaled_cache:
-            scaled = img.scaled(width, height,
-                                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                Qt.TransformationMode.SmoothTransformation)
-            # Center crop to exact size
-            x_offset = (scaled.width() - width) // 2
-            y_offset = (scaled.height() - height) // 2
-            cropped = scaled.copy(x_offset, y_offset, width, height)
-            self._scaled_cache[cache_key] = cropped
+        position_in_slide = time_seconds % self._slide_duration
+        fade_duration = 2.0  # 2 second crossfade
 
-        painter.drawImage(0, 0, self._scaled_cache[cache_key])
+        # Draw current image
+        painter.drawImage(0, 0, self._get_scaled(idx, width, height))
 
-        # Slight dark overlay so text is readable
-        painter.fillRect(0, 0, width, height, QColor(0, 0, 0, 60))
+        # Crossfade near transition
+        if position_in_slide > self._slide_duration - fade_duration:
+            fade_progress = (position_in_slide - (self._slide_duration - fade_duration)) / fade_duration
+            painter.setOpacity(fade_progress)
+            painter.drawImage(0, 0, self._get_scaled(next_idx, width, height))
+            painter.setOpacity(1.0)
 
-        # If slideshow, add crossfade near transitions
-        if len(self._images) > 1:
-            position_in_slide = time_seconds % self._slide_duration
-            fade_duration = 1.0
+        # Slight dark overlay for text readability
+        painter.fillRect(0, 0, width, height, QColor(0, 0, 0, 50))
 
-            if position_in_slide > self._slide_duration - fade_duration:
-                # Fade to next image
-                next_idx = (idx + 1) % len(self._images)
-                next_key = (next_idx, width, height)
-                if next_key not in self._scaled_cache:
-                    next_img = self._images[next_idx]
-                    scaled = next_img.scaled(width, height,
-                                             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                             Qt.TransformationMode.SmoothTransformation)
-                    x_off = (scaled.width() - width) // 2
-                    y_off = (scaled.height() - height) // 2
-                    self._scaled_cache[next_key] = scaled.copy(x_off, y_off, width, height)
-
-                fade_progress = (position_in_slide - (self._slide_duration - fade_duration)) / fade_duration
-                painter.setOpacity(fade_progress)
-                painter.drawImage(0, 0, self._scaled_cache[next_key])
-                painter.setOpacity(1.0)
-                painter.fillRect(0, 0, width, height, QColor(0, 0, 0, 60))
-
-
-# Need this import for NoPen
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QImage
 
 # Registry of procedural backgrounds
 ALL_BACKGROUNDS = [WarmBokeh, Starfield, GradientSweep, Waves, SolidDark]

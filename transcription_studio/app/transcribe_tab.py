@@ -697,11 +697,23 @@ class TranscribeTab(QWidget):
                 if combined_len > max_chars:
                     break
 
-                # Merge
+                # Merge — rebuild word timing from the combined time span
+                combined_text = seg.text + " " + next_seg.text
+
+                # Collect all original Whisper word timestamps (no duplicates)
+                all_words = []
+                seen_times = set()
+                for w in (seg.words or []) + (next_seg.words or []):
+                    key = (round(w.start, 2), round(w.end, 2))
+                    if key not in seen_times:
+                        seen_times.add(key)
+                        all_words.append(w)
+                all_words.sort(key=lambda w: w.start)
+
                 seg.end = next_seg.end
-                seg.text = seg.text + " " + next_seg.text
-                if seg.words and next_seg.words:
-                    seg.words = seg.words + next_seg.words
+                seg.text = combined_text
+                if all_words:
+                    seg.words = align_words(all_words, combined_text)
                 segments.pop(j)
                 merges += 1
                 lines_in_chunk += 1
@@ -712,6 +724,84 @@ class TranscribeTab(QWidget):
             self._refresh_table()
 
         return merges
+
+    def _fix_segment_timing(self):
+        """Clean up word timing issues after lyrics matching and grouping.
+
+        Fixes:
+        - Duplicate lyrics text from overlapping matches
+        - Words with timestamps outside their segment boundaries
+        - Zero-duration words
+        - Overlapping segments
+        """
+        from lyrics.alignment import _distribute_evenly
+
+        segments = self.project.segments
+        for i, seg in enumerate(segments):
+            # Fix duplicate text (e.g., "Jesus my Lord Jesus my Lord")
+            if seg.note and seg.note.startswith("Matched:"):
+                words = seg.text.split()
+                n = len(words)
+                # Check if the text is the same phrase repeated
+                for half in range(n // 3, n // 2 + 1):
+                    if n % half == 0 or (n > half and words[:half] == words[half:2*half]):
+                        # First half equals second half — deduplicate
+                        seg.text = " ".join(words[:half])
+                        break
+
+            if not seg.words:
+                continue
+
+            # Rebuild word list from text to ensure consistency
+            text_words = seg.text.split()
+
+            # Collect unique word timestamps sorted by time
+            unique_times = []
+            seen = set()
+            for w in seg.words:
+                key = round(w.start, 2)
+                if key not in seen:
+                    seen.add(key)
+                    unique_times.append((w.start, w.end))
+            unique_times.sort()
+
+            # Check if timing is usable
+            bad_timing = False
+
+            # Too few timestamps for the text
+            if len(unique_times) < len(text_words) * 0.5:
+                bad_timing = True
+
+            # Timestamps outside segment
+            if not bad_timing and unique_times:
+                if unique_times[0][0] < seg.start - 0.3:
+                    bad_timing = True
+                if unique_times[-1][1] > seg.end + 0.3:
+                    bad_timing = True
+
+            # Non-monotonic or zero-duration
+            if not bad_timing:
+                for j in range(1, len(unique_times)):
+                    if unique_times[j][0] < unique_times[j - 1][0]:
+                        bad_timing = True
+                        break
+
+            if bad_timing or len(seg.words) != len(text_words):
+                # Rebuild evenly — safe fallback
+                seg.words = _distribute_evenly(text_words, seg.start, seg.end)
+            else:
+                # Keep existing timing but ensure words match text
+                seg.words = [
+                    Word(word=text_words[j], start=seg.words[j].start, end=seg.words[j].end)
+                    if j < len(seg.words) else Word(word=text_words[j], start=seg.end, end=seg.end)
+                    for j in range(len(text_words))
+                ]
+
+            # Ensure segment doesn't overlap with next
+            if i + 1 < len(segments):
+                next_seg = segments[i + 1]
+                if seg.end > next_seg.start:
+                    seg.end = next_seg.start
 
     def _save_as_song(self, rows: list[int]):
         """Save selected segments as a new song in the lyrics library."""
@@ -1078,9 +1168,11 @@ class TranscribeTab(QWidget):
         self._lyrics_tracker = None
 
         # Post-processing: merge small adjacent unmatched segments near songs,
-        # re-match them, then group matched lyrics into 2-3 line chunks
+        # re-match them, then group matched lyrics into 2-3 line chunks,
+        # then fix any timing issues
         rematched = self._rematch_unmatched_segments()
         grouped = self._group_lyrics_segments()
+        self._fix_segment_timing()
 
         self.project.mark_dirty()
         n = len(self.project.segments)

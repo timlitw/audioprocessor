@@ -19,6 +19,7 @@ from core.settings import get_last_directory, set_last_directory, get_lyrics_dir
 from lyrics.library import LyricsLibrary
 from lyrics.matcher import LyricsMatcher, SongTracker
 from lyrics.alignment import align_words
+from lyrics.matcher_v2 import match_song_words
 
 # Table column indices
 COL_TIME = 0
@@ -548,6 +549,120 @@ class TranscribeTab(QWidget):
             f"Matched {row - start_row} segments to: {song.title}"
         )
         self.project_changed.emit()
+
+    def _apply_v2_matching(self) -> int:
+        """Apply v2 word-level matching to detected song regions.
+
+        Finds regions where v1 matched a song, collects all Whisper words
+        from that region, and re-matches using v2 to get one segment per
+        lyrics line with accurate timing.
+        """
+        if self._lyrics_library.song_count == 0:
+            return 0
+
+        segments = self.project.segments
+        if not segments:
+            return 0
+
+        # Find song regions: consecutive segments that v1 matched to the same song,
+        # or long unmatched segments surrounded by matched ones
+        regions = self._find_song_regions()
+        if not regions:
+            return 0
+
+        total_new = 0
+
+        # Process regions in reverse order so index shifts don't affect earlier regions
+        for song, start_idx, end_idx in reversed(regions):
+            # Collect ALL whisper words from this region
+            all_words = []
+            for i in range(start_idx, end_idx):
+                seg = segments[i]
+                if seg.words:
+                    all_words.extend(seg.words)
+
+            if len(all_words) < 5:
+                continue
+
+            # Sort by time (should already be sorted, but be safe)
+            all_words.sort(key=lambda w: w.start)
+
+            # Run v2 matching
+            result = match_song_words(all_words, song)
+            if result and result.match_ratio >= 0.3:
+                # Replace the old segments with v2 segments
+                segments[start_idx:end_idx] = result.segments
+                total_new += len(result.segments)
+
+        if total_new > 0:
+            # Re-number segment IDs
+            for i, seg in enumerate(segments):
+                seg.id = i + 1
+            self._refresh_table()
+
+        return total_new
+
+    def _find_song_regions(self) -> list[tuple]:
+        """Find contiguous regions of segments that belong to a song.
+
+        Returns list of (Song, start_index, end_index) tuples.
+        """
+        segments = self.project.segments
+        regions = []
+        i = 0
+
+        while i < len(segments):
+            seg = segments[i]
+
+            # Find a matched segment to identify the song
+            if not seg.note or not seg.note.startswith("Matched:"):
+                i += 1
+                continue
+
+            # Extract song title
+            title = seg.note.replace("Matched: ", "").split(" (")[0]
+            song = None
+            for s in self._lyrics_library.songs:
+                if s.title == title:
+                    song = s
+                    break
+
+            if not song:
+                i += 1
+                continue
+
+            # Expand the region to include surrounding segments
+            # Go back to include unmatched segments before the first match
+            start_idx = i
+            while start_idx > 0:
+                prev = segments[start_idx - 1]
+                # Include if close in time (< 5s gap) and unmatched or same song
+                if segments[start_idx].start - prev.end > 5.0:
+                    break
+                if prev.note and prev.note.startswith("Matched:"):
+                    prev_title = prev.note.replace("Matched: ", "").split(" (")[0]
+                    if prev_title != title:
+                        break
+                start_idx -= 1
+
+            # Go forward to include the rest of the song
+            end_idx = i + 1
+            while end_idx < len(segments):
+                next_seg = segments[end_idx]
+                # Stop if big gap
+                if next_seg.start - segments[end_idx - 1].end > 10.0:
+                    break
+                # Stop if different song
+                if next_seg.note and next_seg.note.startswith("Matched:"):
+                    next_title = next_seg.note.replace("Matched: ", "").split(" (")[0]
+                    if next_title != title:
+                        break
+                end_idx += 1
+
+            regions.append((song, start_idx, end_idx))
+            i = end_idx
+
+        return regions
 
     def _split_long_segments(self) -> int:
         """Split long unmatched segments by matching sliding word windows against lyrics.
@@ -1327,21 +1442,18 @@ class TranscribeTab(QWidget):
         self.btn_transcribe.setEnabled(True)
         self._lyrics_tracker = None
 
-        # Post-processing pipeline:
-        # 1. Split long segments by matching sliding word windows against lyrics
-        # 2. Merge small adjacent unmatched segments and re-match
-        # 3. Group matched lyrics into 2-3 line chunks by section
-        # 4. Fix any timing issues
-        split_count = self._split_long_segments()
+        # Post-processing: use v2 word-level matching on detected song regions
+        v2_matched = self._apply_v2_matching()
+
+        # For non-song segments, keep v1 pipeline
         rematched = self._rematch_unmatched_segments()
-        grouped = self._group_lyrics_segments()
         self._fix_segment_timing()
 
         self.project.mark_dirty()
         n = len(self.project.segments)
         msg = f"Transcription complete: {n} segments."
-        if split_count > 0:
-            msg += f" Split {split_count} long segments."
+        if v2_matched > 0:
+            msg += f" Matched {v2_matched} song segments (v2)."
         if rematched > 0:
             msg += f" Re-matched {rematched} segments."
         if grouped > 0:

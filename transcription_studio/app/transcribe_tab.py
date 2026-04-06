@@ -1443,11 +1443,19 @@ class TranscribeTab(QWidget):
         self._lyrics_tracker = None
 
         # Post-processing: use v2 word-level matching on detected song regions
-        v2_matched = self._apply_v2_matching()
+        v2_matched = 0
+        try:
+            v2_matched = self._apply_v2_matching()
+        except Exception as e:
+            print(f"v2 matching error (non-fatal): {e}")
 
         # For non-song segments, keep v1 pipeline
-        rematched = self._rematch_unmatched_segments()
-        self._fix_segment_timing()
+        try:
+            rematched = self._rematch_unmatched_segments()
+            self._fix_segment_timing()
+        except Exception as e:
+            print(f"Post-processing error (non-fatal): {e}")
+            rematched = 0
 
         self.project.mark_dirty()
         n = len(self.project.segments)
@@ -1456,8 +1464,6 @@ class TranscribeTab(QWidget):
             msg += f" Matched {v2_matched} song segments (v2)."
         if rematched > 0:
             msg += f" Re-matched {rematched} segments."
-        if grouped > 0:
-            msg += f" Grouped {grouped} lyrics segments."
         msg += "\nDouble-click text to edit. Right-click for options."
         self.info_label.setText(msg)
         self.file_label.setText(

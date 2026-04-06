@@ -103,6 +103,7 @@ class LyricsMatcher:
         if search_end is None:
             search_end = len(song.lines)
 
+        input_word_count = len(normalized_text.split())
         best: MatchResult | None = None
 
         for window_size in range(1, 5):  # 1 to 4 lines
@@ -114,6 +115,12 @@ class LyricsMatcher:
                 window_text = " ".join(
                     song.lines[i].normalized for i in range(start, end)
                 )
+
+                # Reject if lyrics have way more words than the segment
+                # (prevents cramming a whole verse into a short segment)
+                lyrics_word_count = len(window_text.split())
+                if input_word_count > 0 and lyrics_word_count > input_word_count * 2:
+                    continue
 
                 score = difflib.SequenceMatcher(
                     None, normalized_text, window_text

@@ -831,7 +831,26 @@ class TranscribeTab(QWidget):
                 sections.append((f"Verse {section_num}", current_lines))
                 current_lines = []
                 section_num += 1
-            current_lines.append(seg.text.strip())
+            # Split long lines into ~6-10 word phrases
+            text = seg.text.strip()
+            words = text.split()
+            if len(words) <= 10:
+                current_lines.append(text)
+            else:
+                # Split at commas, semicolons, or midpoint
+                phrases = []
+                current_phrase = []
+                for w in words:
+                    current_phrase.append(w)
+                    # Break after punctuation or when phrase gets long enough
+                    if (len(current_phrase) >= 6 and
+                            (w.endswith(',') or w.endswith(';') or w.endswith('.')
+                             or len(current_phrase) >= 10)):
+                        phrases.append(" ".join(current_phrase))
+                        current_phrase = []
+                if current_phrase:
+                    phrases.append(" ".join(current_phrase))
+                current_lines.extend(phrases)
             prev_end = seg.end
 
         if current_lines:

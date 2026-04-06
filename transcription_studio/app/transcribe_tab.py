@@ -13,17 +13,12 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QShortcut, QKeySequence
 
 from audio.playback import PlaybackEngine
+from audio.file_io import load_audio, FILE_FILTER
 from core.project import TranscriptProject, Segment, Word, Speaker
-from core.settings import get_last_directory, set_last_directory
-
-# Reuse file_io from audio_processor (parent project)
-import importlib.util
-_file_io_path = str(Path(__file__).resolve().parent.parent.parent / "audio" / "file_io.py")
-_spec = importlib.util.spec_from_file_location("audio_processor_file_io", _file_io_path)
-_file_io = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_file_io)
-load_audio = _file_io.load_audio
-FILE_FILTER = _file_io.FILE_FILTER
+from core.settings import get_last_directory, set_last_directory, get_lyrics_dir
+from lyrics.library import LyricsLibrary
+from lyrics.matcher import LyricsMatcher, SongTracker
+from lyrics.alignment import align_words
 
 # Table column indices
 COL_TIME = 0
@@ -44,6 +39,12 @@ class TranscribeTab(QWidget):
         self.playback = playback
         self._audio_data: np.ndarray | None = None
         self._updating_table: bool = False  # flag to prevent edit loops
+
+        # Lyrics matching
+        self._lyrics_library = LyricsLibrary(get_lyrics_dir())
+        self._lyrics_library.scan()
+        self._lyrics_matcher = LyricsMatcher(self._lyrics_library)
+        self._lyrics_tracker: SongTracker | None = None
 
         self._build_ui()
         self._connect_signals()
@@ -70,8 +71,8 @@ class TranscribeTab(QWidget):
 
         top_bar.addWidget(QLabel("Model:"))
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["tiny", "base", "small", "medium"])
-        self.model_combo.setCurrentText("base")
+        self.model_combo.addItems(["small", "medium", "large-v3"])
+        self.model_combo.setCurrentText("medium")
         self.model_combo.setToolTip("Whisper model size — larger = more accurate but slower")
         top_bar.addWidget(self.model_combo)
 
@@ -99,9 +100,15 @@ class TranscribeTab(QWidget):
         self.table.setHorizontalHeaderLabels(["Time", "Speaker", "Text", "Type", "BG"])
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setWordWrap(True)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(32)
+        self.table.verticalHeader().setMinimumSectionSize(28)
+
+        # Expand row when editing for better visibility
+        self._editing_row = -1
+        self._original_row_height = 32
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -120,6 +127,14 @@ class TranscribeTab(QWidget):
             }
             QTableWidget::item { padding: 4px 6px; }
             QTableWidget::item:selected { background: #3a5a8a; }
+            QTableWidget QLineEdit {
+                font-family: 'Segoe UI', sans-serif; font-size: 14px;
+                padding: 2px 6px;
+                margin: 0px;
+                background: #1a1a2e; color: #ffffff;
+                border: 2px solid #4a9eff;
+                min-height: 28px;
+            }
             QHeaderView::section {
                 background: #333; color: #aaa; padding: 4px 8px;
                 border: none; border-bottom: 1px solid #555;
@@ -179,6 +194,8 @@ class TranscribeTab(QWidget):
         self.playback.playback_finished.connect(self._on_playback_finished)
         self.table.cellClicked.connect(self._on_cell_clicked)
         self.table.cellChanged.connect(self._on_cell_changed)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+        self.table.itemDelegate().closeEditor.connect(self._on_editor_closed)
 
     def _build_shortcuts(self):
         # Tab = replay current segment
@@ -238,6 +255,21 @@ class TranscribeTab(QWidget):
 
         menu.addSeparator()
 
+        # Lyrics matching
+        if self._lyrics_library.song_count > 0:
+            act_match = menu.addAction(f"Match Lyrics ({self._lyrics_library.song_count} songs)")
+            act_match.triggered.connect(lambda: self._match_lyrics(row))
+
+        selected_rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()))
+        if len(selected_rows) >= 1:
+            act_save_song = menu.addAction("Save as Song...")
+            act_save_song.triggered.connect(lambda: self._save_as_song(selected_rows))
+
+        act_group = menu.addAction("Group Song Lines")
+        act_group.triggered.connect(self._group_lyrics_manual)
+
+        menu.addSeparator()
+
         act_delete = menu.addAction("Delete segment")
         act_delete.triggered.connect(lambda: self._delete_segment(row))
 
@@ -264,6 +296,19 @@ class TranscribeTab(QWidget):
 
     # --- Segment editing ---
 
+    def _on_cell_double_clicked(self, row: int, col: int):
+        """Expand the row when user starts editing for better visibility."""
+        if col in (COL_TEXT, COL_SPEAKER):
+            self._editing_row = row
+            self._original_row_height = self.table.rowHeight(row)
+            self.table.setRowHeight(row, 56)
+
+    def _on_editor_closed(self):
+        """Restore row height after editing finishes."""
+        if self._editing_row >= 0:
+            self.table.setRowHeight(self._editing_row, self._original_row_height)
+            self._editing_row = -1
+
     def _on_cell_changed(self, row: int, col: int):
         """Handle inline edits to text or speaker columns."""
         if self._updating_table:
@@ -280,6 +325,11 @@ class TranscribeTab(QWidget):
                 seg.text = new_text
                 self.project.mark_dirty()
                 self.info_label.setText(f"Edited segment {seg.id} at {self.project.format_time(seg.start)}")
+
+                # If playback was paused (review mode), replay edited segment then continue
+                if self.playback.is_paused:
+                    self.playback.play(seg.start)
+                    self.btn_play.setText("\u23f8 Pause")
 
         elif col == COL_SPEAKER:
             item = self.table.item(row, COL_SPEAKER)
@@ -404,6 +454,310 @@ class TranscribeTab(QWidget):
         seg.background_change = ""
         self.project.mark_dirty()
         self._refresh_row(row)
+
+    # --- Lyrics matching ---
+
+    def _match_lyrics(self, row: int):
+        """Manual lyrics lookup for a single segment."""
+        seg = self._get_segment_for_row(row)
+        if seg is None:
+            return
+
+        result = self._lyrics_matcher.match_segment(seg.text, threshold=0.40)
+        if result is None:
+            QMessageBox.information(self, "Match Lyrics", "No matching song found in the lyrics library.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Match Lyrics",
+            f"Best match: {result.song.title} ({result.score:.0%})\n\n"
+            f"Replace:\n  {seg.text}\n\nWith:\n  {result.matched_text}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            if seg.words:
+                seg.words = align_words(seg.words, result.matched_text)
+            seg.text = result.matched_text
+            seg.note = f"Matched: {result.song.title} ({result.score:.0%})"
+            self.project.mark_dirty()
+            self._refresh_row(row)
+            self.info_label.setText(f"Matched to: {result.song.title}")
+            self.project_changed.emit()
+
+            # Continue matching subsequent segments sequentially
+            self._continue_matching(row + 1, result.song, result.line_end)
+
+    def _continue_matching(self, start_row: int, song, expected_line: int):
+        """Walk subsequent segments, matching sequentially through the song."""
+        from PyQt6.QtWidgets import QCheckBox
+
+        approve_all = False
+        row = start_row
+
+        while row < self.table.rowCount() and expected_line < len(song.lines):
+            seg = self._get_segment_for_row(row)
+            if seg is None:
+                break
+
+            result = self._lyrics_matcher.match_in_song(
+                seg.text, song, expected_line=expected_line,
+            )
+
+            if result is None or result.score < 0.35:
+                # No match — song may have ended
+                break
+
+            if not approve_all:
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Match Lyrics")
+                msg_box.setText(
+                    f"{song.title} — next line ({result.score:.0%})\n\n"
+                    f"Replace:\n  {seg.text}\n\nWith:\n  {result.matched_text}"
+                )
+                cb = QCheckBox("Approve all remaining matches for this song")
+                msg_box.setCheckBox(cb)
+                msg_box.setStandardButtons(
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No
+                    | QMessageBox.StandardButton.Cancel
+                )
+                msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+                reply = msg_box.exec()
+
+                if reply == QMessageBox.StandardButton.Cancel:
+                    break
+                if reply == QMessageBox.StandardButton.No:
+                    # Skip this segment, keep going
+                    row += 1
+                    continue
+                if cb.isChecked():
+                    approve_all = True
+
+            # Apply the match
+            if seg.words:
+                seg.words = align_words(seg.words, result.matched_text)
+            seg.text = result.matched_text
+            seg.note = f"Matched: {song.title} ({result.score:.0%})"
+            self.project.mark_dirty()
+            self._refresh_row(row)
+
+            expected_line = result.line_end
+            row += 1
+
+        self.info_label.setText(
+            f"Matched {row - start_row} segments to: {song.title}"
+        )
+        self.project_changed.emit()
+
+    def _rematch_unmatched_segments(self) -> int:
+        """Merge adjacent unmatched segments near song sections and re-try matching."""
+        segments = self.project.segments
+        if not segments or self._lyrics_library.song_count == 0:
+            return 0
+
+        rematched = 0
+        i = 0
+        while i < len(segments):
+            seg = segments[i]
+
+            # Skip already-matched segments
+            if seg.note and seg.note.startswith("Matched:"):
+                i += 1
+                continue
+
+            # Look for a run of consecutive unmatched segments
+            run = [i]
+            j = i + 1
+            while j < len(segments) and j - i < 6:
+                next_seg = segments[j]
+                if next_seg.note and next_seg.note.startswith("Matched:"):
+                    break
+                # Only merge if gap is small (< 2 seconds)
+                if next_seg.start - segments[j - 1].end > 2.0:
+                    break
+                run.append(j)
+                j += 1
+
+            # Only try re-matching if there are 2+ segments to merge
+            # and they're near a matched segment (within 30 seconds)
+            if len(run) >= 2:
+                near_match = False
+                if i > 0 and segments[i - 1].note and segments[i - 1].note.startswith("Matched:"):
+                    near_match = True
+                if j < len(segments) and segments[j].note and segments[j].note.startswith("Matched:"):
+                    near_match = True
+
+                if near_match:
+                    # Merge text from the run
+                    combined_text = " ".join(segments[k].text for k in run)
+
+                    # Try matching
+                    result = self._lyrics_matcher.match_segment(combined_text, threshold=0.50)
+                    if result:
+                        # Apply match to first segment, remove the rest
+                        base = segments[run[0]]
+                        base.end = segments[run[-1]].end
+                        base.text = result.matched_text
+
+                        # Combine words for alignment
+                        all_words = []
+                        for k in run:
+                            if segments[k].words:
+                                all_words.extend(segments[k].words)
+                        if all_words:
+                            base.words = align_words(all_words, result.matched_text)
+
+                        base.note = f"Matched: {result.song.title} ({result.score:.0%})"
+
+                        # Remove merged segments
+                        for k in reversed(run[1:]):
+                            segments.pop(k)
+
+                        rematched += 1
+                        continue  # don't increment i, check this position again
+
+            i += 1
+
+        if rematched > 0:
+            self._refresh_table()
+
+        return rematched
+
+    def _group_lyrics_manual(self):
+        """Manual trigger for grouping lyrics segments."""
+        merged = self._group_lyrics_segments()
+        if merged > 0:
+            self.project.mark_dirty()
+            self.info_label.setText(f"Grouped {merged} lyrics segments.")
+            self.project_changed.emit()
+        else:
+            self.info_label.setText("No lyrics segments to group.")
+
+    def _group_lyrics_segments(self, max_chars: int = 120, max_lines: int = 3) -> int:
+        """Merge consecutive lyrics-matched segments into 2-3 line groups.
+
+        Respects section boundaries — won't merge a verse line with a chorus line.
+        Returns the number of merges performed.
+        """
+        segments = self.project.segments
+        if not segments:
+            return 0
+
+        def _get_section(seg):
+            """Find which section a matched segment belongs to in its song."""
+            if not seg.note or not seg.note.startswith("Matched:"):
+                return None
+            # Extract song title from note
+            title = seg.note.replace("Matched: ", "").split(" (")[0]
+            for song in self._lyrics_library.songs:
+                if song.title == title:
+                    # Find matching line by text
+                    from lyrics.library import _normalize
+                    seg_norm = _normalize(seg.text)
+                    for line in song.lines:
+                        if line.normalized in seg_norm or seg_norm in line.normalized:
+                            return line.section
+                    # Try first word match as fallback
+                    seg_words = seg_norm.split()[:3]
+                    for line in song.lines:
+                        line_words = line.normalized.split()[:3]
+                        if seg_words == line_words:
+                            return line.section
+            return None
+
+        merges = 0
+        i = 0
+        while i < len(segments):
+            seg = segments[i]
+            if not seg.note or not seg.note.startswith("Matched:"):
+                i += 1
+                continue
+
+            song_tag = seg.note.split("(")[0].strip()
+            base_section = _get_section(seg)
+
+            # Merge consecutive segments from the same song AND same section
+            lines_in_chunk = 1
+            j = i + 1
+            while j < len(segments) and lines_in_chunk < max_lines:
+                next_seg = segments[j]
+                if not next_seg.note or not next_seg.note.startswith("Matched:"):
+                    break
+                next_tag = next_seg.note.split("(")[0].strip()
+                if next_tag != song_tag:
+                    break
+
+                # Check section boundary
+                next_section = _get_section(next_seg)
+                if next_section != base_section:
+                    break
+
+                # Check combined length
+                combined_len = len(seg.text) + len(next_seg.text) + 1
+                if combined_len > max_chars:
+                    break
+
+                # Merge
+                seg.end = next_seg.end
+                seg.text = seg.text + " " + next_seg.text
+                if seg.words and next_seg.words:
+                    seg.words = seg.words + next_seg.words
+                segments.pop(j)
+                merges += 1
+                lines_in_chunk += 1
+
+            i += 1
+
+        if merges > 0:
+            self._refresh_table()
+
+        return merges
+
+    def _save_as_song(self, rows: list[int]):
+        """Save selected segments as a new song in the lyrics library."""
+        from PyQt6.QtWidgets import QInputDialog
+
+        segments = []
+        for r in rows:
+            seg = self._get_segment_for_row(r)
+            if seg and seg.text.strip():
+                segments.append(seg)
+
+        if not segments:
+            return
+
+        title, ok = QInputDialog.getText(self, "Save as Song", "Song title:")
+        if not ok or not title.strip():
+            return
+
+        # Group into sections — new section when gap > 5 seconds
+        sections: list[tuple[str, list[str]]] = []
+        current_lines: list[str] = []
+        section_num = 1
+        prev_end = segments[0].start
+
+        for seg in segments:
+            if seg.start - prev_end > 5.0 and current_lines:
+                sections.append((f"Verse {section_num}", current_lines))
+                current_lines = []
+                section_num += 1
+            current_lines.append(seg.text.strip())
+            prev_end = seg.end
+
+        if current_lines:
+            sections.append((f"Verse {section_num}", current_lines))
+
+        file_path = self._lyrics_library.save_song(title.strip(), sections)
+        self.info_label.setText(
+            f"Saved '{title.strip()}' to lyrics library "
+            f"({len(sections)} sections, {sum(len(s[1]) for s in sections)} lines)"
+        )
+        QMessageBox.information(
+            self, "Save as Song",
+            f"Saved: {file_path}\n\n"
+            f"{len(sections)} sections, {sum(len(s[1]) for s in sections)} lines.\n"
+            f"Library now has {self._lyrics_library.song_count} songs."
+        )
 
     def _refresh_display_speakers(self):
         """Update the speaker column display to show sticky names."""
@@ -654,6 +1008,10 @@ class TranscribeTab(QWidget):
         self._whisper_worker.segment_ready.connect(self._on_segment_ready)
         self._whisper_worker.finished_transcription.connect(self._on_transcribe_finished)
         self._whisper_worker.error.connect(self._on_transcribe_error)
+
+        # Start lyrics tracking for auto-detection
+        self._lyrics_tracker = SongTracker(self._lyrics_matcher)
+
         self._whisper_worker.start()
 
     def _on_transcribe_progress(self, pct: int, msg: str):
@@ -671,6 +1029,15 @@ class TranscribeTab(QWidget):
             words=words,
             confidence=seg_dict.get("confidence", 0.0),
         )
+
+        # Auto-detect lyrics from library
+        if self._lyrics_tracker and seg.words and len(seg.words) >= 3:
+            match = self._lyrics_tracker.process_segment(seg.text)
+            if match:
+                seg.words = align_words(seg.words, match.matched_text)
+                seg.text = match.matched_text
+                seg.note = f"Matched: {match.song.title} ({match.score:.0%})"
+
         self.project.segments.append(seg)
         self._add_segment_row(seg)
         # Auto-scroll to latest segment
@@ -679,9 +1046,22 @@ class TranscribeTab(QWidget):
     def _on_transcribe_finished(self):
         self.progress.setVisible(False)
         self.btn_transcribe.setEnabled(True)
+        self._lyrics_tracker = None
+
+        # Post-processing: merge small adjacent unmatched segments near songs,
+        # re-match them, then group matched lyrics into 2-3 line chunks
+        rematched = self._rematch_unmatched_segments()
+        grouped = self._group_lyrics_segments()
+
         self.project.mark_dirty()
         n = len(self.project.segments)
-        self.info_label.setText(f"Transcription complete: {n} segments.\nDouble-click text to edit. Right-click for options.")
+        msg = f"Transcription complete: {n} segments."
+        if rematched > 0:
+            msg += f" Re-matched {rematched} segments."
+        if grouped > 0:
+            msg += f" Grouped {grouped} lyrics segments."
+        msg += "\nDouble-click text to edit. Right-click for options."
+        self.info_label.setText(msg)
         self.file_label.setText(
             f"{self.project.audio_file}  |  {self.project.audio_duration / 60:.1f} min  |  {n} segments"
         )

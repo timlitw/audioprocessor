@@ -55,10 +55,23 @@ def set_last_directory(directory: str) -> None:
 
 
 def get_whisper_model() -> str:
-    return load_settings().get("whisper_model", "base")
+    return load_settings().get("whisper_model", "medium")
 
 
 def set_whisper_model(model: str) -> None:
     settings = load_settings()
     settings["whisper_model"] = model
+    save_settings(settings)
+
+
+DEFAULT_LYRICS_DIR = str(Path.home() / "OneDrive" / "Music" / "lyrics")
+
+
+def get_lyrics_dir() -> str:
+    return load_settings().get("lyrics_dir", DEFAULT_LYRICS_DIR)
+
+
+def set_lyrics_dir(directory: str) -> None:
+    settings = load_settings()
+    settings["lyrics_dir"] = directory
     save_settings(settings)

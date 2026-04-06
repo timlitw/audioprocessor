@@ -193,7 +193,7 @@ class VideoTab(QWidget):
 
         t = 60.0
         for seg in self.project.segments:
-            if seg.type == "speech" and seg.text.strip():
+            if seg.type in ("speech", "singing") and seg.text.strip():
                 t = (seg.start + seg.end) / 2
                 break
 
@@ -224,7 +224,7 @@ class VideoTab(QWidget):
         # Find first speech segment to start from
         start_time = 0.0
         for seg in self.project.segments:
-            if seg.type == "speech":
+            if seg.type in ("speech", "singing"):
                 start_time = seg.start
                 break
 

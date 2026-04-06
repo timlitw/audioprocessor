@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.3.0] - 2026-04-06
+
+### Added — Lyrics Matching System
+- **Lyrics library:** Scans `.md`/`.txt` files from configurable lyrics directory (default: `~/OneDrive/Music/lyrics`)
+- **Auto-detect during transcription:** Automatically identifies known songs and replaces Whisper's garbled words with correct lyrics, preserving word-level timestamps
+- **Sequential song tracking:** Once a song is detected, follows along line-by-line through the performance, handling verse/chorus order
+- **Chorus loopback:** Repeated choruses are matched correctly regardless of how many times they're sung
+- **Manual "Match Lyrics":** Right-click any segment to force a lyrics lookup with confirmation dialog
+- **Sequential approval flow:** After approving a match, automatically proposes the next line with Yes/No/Cancel and "Approve all remaining" checkbox
+- **"Save as Song...":** Select segments, right-click to save corrected lyrics to the library for future auto-matching; auto-groups into sections based on timing gaps
+- **"Group Song Lines":** Merges consecutive matched lyrics into 2-3 line chunks (like church projector slides), respecting verse/chorus section boundaries
+- **Post-transcription cleanup:** After transcription, automatically re-matches fragmented segments and groups lyrics into display-friendly chunks
+- **Word alignment:** Maps Whisper's timestamps onto correct lyrics words using sequence alignment, ensuring video text sync even when word counts differ
+
+### Changed
+- **Whisper models:** Removed tiny/base models, added large-v3 (best quality); default changed to medium
+- **Whisper settings:** Added `condition_on_previous_text=False` and `no_speech_threshold=0.6` to prevent looping on music
+- **Multi-select in transcript table:** Changed from single to extended selection for selecting song segments
+- **Inline editing:** Edit field now has visible blue border, larger font, and row expands when editing for better visibility
+- **Review workflow:** After editing a segment while paused, playback auto-resumes from that segment
+
+### Added — PyInstaller Distribution
+- **Build system:** `build.py` script with `audio_processor.spec` and `transcription_studio.spec`
+- **Two separate distributions:** AudioProcessor (~112 MB zip) and TranscriptionStudio (~208 MB zip)
+- **onedir mode:** Fast startup, distributed as zip folders (extract and run)
+
+### Fixed
+- Video preview now includes singing-type segments (was skipping them)
+- Cross-project import hack replaced with clean local copy of `file_io.py` in transcription_studio
+
+---
+
 ## [0.2.0] - 2026-04-05
 
 ### Added — Transcription Studio (Tool 2)

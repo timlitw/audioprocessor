@@ -11,7 +11,7 @@ class WhisperWorker(QThread):
     finished_transcription = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, audio_path: str, model_size: str = "base", parent=None):
+    def __init__(self, audio_path: str, model_size: str = "medium", parent=None):
         super().__init__(parent)
         self.audio_path = audio_path
         self.model_size = model_size
@@ -34,6 +34,8 @@ class WhisperWorker(QThread):
                 self.audio_path,
                 word_timestamps=True,
                 language=None,  # auto-detect
+                condition_on_previous_text=False,  # prevents looping on music/singing
+                no_speech_threshold=0.6,  # skip instrumental sections faster
             )
 
             duration = info.duration if hasattr(info, 'duration') else 0
@@ -76,5 +78,5 @@ class WhisperWorker(QThread):
             self.error.emit(str(e))
 
     def _model_size_mb(self) -> str:
-        sizes = {"tiny": "75", "base": "150", "small": "500", "medium": "1500"}
+        sizes = {"small": "500", "medium": "1500", "large-v3": "3000"}
         return sizes.get(self.model_size, "?")

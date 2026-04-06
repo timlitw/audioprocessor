@@ -21,7 +21,8 @@
 - **Inline editing:** Edit field now has visible blue border, larger font, and row expands when editing for better visibility
 - **Review workflow:** After editing a segment while paused, playback auto-resumes from that segment
 
-### Added — PyInstaller Distribution
+### Added — Export & Distribution
+- **Export Transcript:** File → Export Transcript saves plain text with timestamps (`[MM:SS.mm] text`)
 - **Build system:** `build.py` script with `audio_processor.spec` and `transcription_studio.spec`
 - **Two separate distributions:** AudioProcessor (~112 MB zip) and TranscriptionStudio (~208 MB zip)
 - **onedir mode:** Fast startup, distributed as zip folders (extract and run)

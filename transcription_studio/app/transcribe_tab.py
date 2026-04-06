@@ -981,6 +981,35 @@ class TranscribeTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
 
+    def _export_transcript(self):
+        """Export transcript as plain text with timestamps."""
+        if not self.project.segments:
+            QMessageBox.information(self, "Export", "No transcript to export.")
+            return
+
+        default_name = ""
+        if self.project.audio_file:
+            default_name = Path(self.project.audio_file).stem + ".txt"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Transcript", default_name, "Text Files (*.txt);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        lines = []
+        for seg in self.project.segments:
+            if not seg.text.strip():
+                continue
+            timestamp = self.project.format_time(seg.start)
+            lines.append(f"[{timestamp}] {seg.text}")
+
+        try:
+            Path(file_path).write_text("\n".join(lines), encoding="utf-8")
+            self.info_label.setText(f"Exported {len(lines)} lines to {Path(file_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
+
     # --- Transcription ---
 
     def _start_transcription(self):

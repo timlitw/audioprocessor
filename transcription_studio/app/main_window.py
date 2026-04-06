@@ -64,6 +64,10 @@ class MainWindow(QMainWindow):
         save_action.triggered.connect(self.transcribe_tab._save_project)
         file_menu.addAction(save_action)
 
+        export_action = QAction("&Export Transcript...", self)
+        export_action.triggered.connect(self.transcribe_tab._export_transcript)
+        file_menu.addAction(export_action)
+
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)

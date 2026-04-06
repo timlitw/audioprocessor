@@ -164,14 +164,36 @@ A two-tab app for transcribing audio and generating shareable videos.
 
 ### Transcribe Tab
 - **Whisper transcription** -- runs locally on your machine, no internet or API key needed
+- **Model options** -- small, medium (default), or large-v3 for best accuracy
 - **Word-level timestamps** -- every word is timed for precise video sync
 - **Editable transcript** -- double-click any text to correct mistakes
+- **Review workflow** -- play through the transcript, pause to edit, auto-resumes after corrections
 - **Speaker names** -- double-click the Speaker column to name who's talking; the name carries forward until the next change
 - **Segment controls** -- right-click to split, merge, delete segments or mark sections as singing
 - **Click any segment** to hear it play back
 - **Tab** replays the current segment, **Enter** jumps to the next one
 - **Background triggers** -- right-click a segment to change the video background at that point (choose a procedural style or pick an image)
 - **Save/load projects** -- saves as a JSON file next to the audio (same name), pick up where you left off
+- **Export transcript** -- File → Export Transcript saves a plain text file with timestamps
+
+### Lyrics Matching
+- **Lyrics library** -- put `.md` or `.txt` files with song lyrics in a folder (default: `~/OneDrive/Music/lyrics`)
+- **Auto-detect during transcription** -- known songs are automatically identified and corrected with the real lyrics
+- **Sequential tracking** -- once a song is detected, follows along line-by-line, handling repeated choruses
+- **Manual matching** -- right-click any segment → "Match Lyrics" to force a lookup with approval flow
+- **Save as Song** -- select corrected segments, right-click → "Save as Song" to add to the library for future use
+- **Section-aware grouping** -- matched lyrics are grouped into 2-3 line chunks respecting verse/chorus boundaries
+- **Lyrics file format:**
+  ```
+  # Song Title
+  ## Verse 1
+  First line of verse one
+  Second line of verse one
+
+  ## Chorus
+  First line of chorus
+  Second line of chorus
+  ```
 
 ### Video Tab
 - **5 procedural backgrounds** -- Warm Bokeh (ambient light orbs), Starfield, Gradient Sweep, Waves, Solid Dark
@@ -195,7 +217,11 @@ cd transcription_studio
 pip install -r requirements.txt
 ```
 
-This installs `faster-whisper` for transcription. The Whisper model (~150MB for "base") downloads automatically on first use.
+This installs `faster-whisper` for transcription. The Whisper model downloads automatically on first use (~500MB for small, ~1.5GB for medium, ~3GB for large-v3).
+
+### Standalone Executable
+
+Pre-built Windows executables are available -- no Python install needed. Download the zip, extract, and double-click `TranscriptionStudio.exe`.
 
 ### Run
 
@@ -209,7 +235,7 @@ python main.py
 ### Transcribing
 
 1. Click **Open Audio** and select your cleaned MP3 (from the Audio Processor)
-2. Choose a **model size** -- "tiny" is fastest, "base" is a good balance, "medium" is most accurate
+2. Choose a **model size** -- "small" is fastest, "medium" is a good balance (default), "large-v3" is most accurate
 3. Click **Transcribe** -- segments appear live as Whisper processes the audio
 4. When done, review the transcript and fix any mistakes
 
@@ -248,17 +274,27 @@ If you're using custom images or want to switch styles during the video:
 
 The output MP4 plays in Windows Media Player and is ready to upload to YouTube, Facebook, or your church website.
 
+### Using the Lyrics Library
+
+1. Create a folder for lyrics (default: `~/OneDrive/Music/lyrics`)
+2. Add `.md` files with song lyrics using the `# Title` / `## Section` format
+3. When you transcribe, known songs are **automatically corrected** with the right lyrics
+4. For songs not in the library: correct the transcript manually, select the song segments, right-click → **Save as Song**
+5. Next time that song appears in any recording, it will be auto-matched
+
 ### Typical Transcription Studio Workflow
 
 1. Open the cleaned audio from the Audio Processor
-2. Transcribe with Whisper (base model)
-3. Listen through, fix any transcription errors
-4. Name the speakers (Pastor, Reader, etc.)
-5. Mark singing sections if Whisper got them garbled
-6. Optionally set background change points
-7. Switch to Video tab, pick style and background
-8. Preview, then Render MP4
-9. Upload to YouTube or share the file
+2. Transcribe with Whisper (medium model recommended)
+3. Songs in your lyrics library are auto-corrected; review the results
+4. Listen through, fix any remaining transcription errors
+5. For new songs: correct manually, select segments, Save as Song
+6. Name the speakers (Pastor, Reader, etc.)
+7. Optionally set background change points
+8. Switch to Video tab, pick style and background
+9. Preview, then Render MP4
+10. Export transcript (File → Export Transcript) if needed
+11. Upload to YouTube or share the file
 
 ### Transcription Studio Keyboard Shortcuts
 

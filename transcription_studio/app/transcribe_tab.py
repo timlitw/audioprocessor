@@ -566,13 +566,20 @@ class TranscribeTab(QWidget):
         while i < len(segments):
             seg = segments[i]
 
-            # Only process long unmatched segments with word timestamps
-            if seg.note and seg.note.startswith("Matched:"):
-                i += 1
-                continue
+            # Only process long segments with word timestamps
             if not seg.words or len(seg.words) < 10:
                 i += 1
                 continue
+            # Skip matched segments unless they're suspiciously long
+            # (matched text covers less than half the words)
+            if seg.note and seg.note.startswith("Matched:"):
+                matched_word_count = len(seg.text.split())
+                if matched_word_count >= len(seg.words) * 0.6:
+                    i += 1
+                    continue
+                # Clear the bad match so we can re-split
+                seg.note = ""
+                seg.text = " ".join(w.word for w in seg.words)
 
             # Try to find lyrics matches within this segment's words
             new_segments = self._try_split_by_lyrics(seg)
@@ -1333,6 +1340,8 @@ class TranscribeTab(QWidget):
         self.project.mark_dirty()
         n = len(self.project.segments)
         msg = f"Transcription complete: {n} segments."
+        if split_count > 0:
+            msg += f" Split {split_count} long segments."
         if rematched > 0:
             msg += f" Re-matched {rematched} segments."
         if grouped > 0:

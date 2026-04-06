@@ -116,10 +116,13 @@ class LyricsMatcher:
                     song.lines[i].normalized for i in range(start, end)
                 )
 
-                # Reject if lyrics have way more words than the segment
-                # (prevents cramming a whole verse into a short segment)
+                # Reject if word counts are too mismatched
+                # (prevents cramming a whole verse into a short segment,
+                # or matching only half a long segment)
                 lyrics_word_count = len(window_text.split())
                 if input_word_count > 0 and lyrics_word_count > input_word_count * 2:
+                    continue
+                if lyrics_word_count > 0 and input_word_count > lyrics_word_count * 1.8:
                     continue
 
                 score = difflib.SequenceMatcher(

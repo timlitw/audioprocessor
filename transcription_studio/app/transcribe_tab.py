@@ -549,6 +549,140 @@ class TranscribeTab(QWidget):
         )
         self.project_changed.emit()
 
+    def _split_long_segments(self) -> int:
+        """Split long unmatched segments by matching sliding word windows against lyrics.
+
+        When Whisper produces a 25-second, 30-word segment, this tries matching
+        the first ~8 words, splits at the match boundary, then repeats for the rest.
+        Returns the number of splits performed.
+        """
+        if self._lyrics_library.song_count == 0:
+            return 0
+
+        segments = self.project.segments
+        splits = 0
+        i = 0
+
+        while i < len(segments):
+            seg = segments[i]
+
+            # Only process long unmatched segments with word timestamps
+            if seg.note and seg.note.startswith("Matched:"):
+                i += 1
+                continue
+            if not seg.words or len(seg.words) < 10:
+                i += 1
+                continue
+
+            # Try to find lyrics matches within this segment's words
+            new_segments = self._try_split_by_lyrics(seg)
+            if new_segments and len(new_segments) > 1:
+                # Replace the original segment with the split pieces
+                segments[i:i+1] = new_segments
+                splits += len(new_segments) - 1
+                i += len(new_segments)
+            else:
+                i += 1
+
+        if splits > 0:
+            # Re-number segment IDs
+            for idx, seg in enumerate(segments):
+                seg.id = idx + 1
+            self._refresh_table()
+
+        return splits
+
+    def _try_split_by_lyrics(self, seg: Segment) -> list[Segment] | None:
+        """Try to split a segment into pieces that match lyrics lines.
+
+        Slides a window across the segment's words, trying to match each
+        window against the lyrics library. When a match is found, creates
+        a new segment for those words and continues with the remainder.
+        """
+        words = seg.words
+        if not words:
+            return None
+
+        result_segments = []
+        word_idx = 0
+        seg_id_base = seg.id
+
+        while word_idx < len(words):
+            remaining_words = words[word_idx:]
+            if len(remaining_words) < 3:
+                # Too few words left — add as final segment
+                if remaining_words:
+                    text = " ".join(w.word for w in remaining_words)
+                    new_seg = Segment(
+                        id=seg_id_base,
+                        type=seg.type,
+                        start=remaining_words[0].start,
+                        end=remaining_words[-1].end,
+                        text=text,
+                        words=list(remaining_words),
+                        confidence=seg.confidence,
+                        speaker_id=seg.speaker_id,
+                    )
+                    result_segments.append(new_seg)
+                break
+
+            # Try matching windows of 4-12 words from the current position
+            best_match = None
+            best_end_idx = 0
+
+            for win_size in range(min(12, len(remaining_words)), 3, -1):
+                window_words = remaining_words[:win_size]
+                window_text = " ".join(w.word for w in window_words)
+
+                match = self._lyrics_matcher.match_segment(window_text, threshold=0.50)
+                if match:
+                    # Check that the match isn't way longer than our window
+                    match_word_count = len(match.matched_text.split())
+                    if match_word_count <= win_size * 2:
+                        best_match = match
+                        best_end_idx = win_size
+                        break
+
+            if best_match:
+                # Create a matched segment
+                matched_words = remaining_words[:best_end_idx]
+                aligned = align_words(list(matched_words), best_match.matched_text)
+                new_seg = Segment(
+                    id=seg_id_base,
+                    type=seg.type,
+                    start=matched_words[0].start,
+                    end=matched_words[-1].end,
+                    text=best_match.matched_text,
+                    words=aligned,
+                    confidence=seg.confidence,
+                    speaker_id=seg.speaker_id,
+                    note=f"Matched: {best_match.song.title} ({best_match.score:.0%})",
+                )
+                result_segments.append(new_seg)
+                word_idx += best_end_idx
+            else:
+                # No match found — try a smaller chunk (just take ~8 words as-is)
+                chunk_size = min(8, len(remaining_words))
+                chunk_words = remaining_words[:chunk_size]
+                text = " ".join(w.word for w in chunk_words)
+                new_seg = Segment(
+                    id=seg_id_base,
+                    type=seg.type,
+                    start=chunk_words[0].start,
+                    end=chunk_words[-1].end,
+                    text=text,
+                    words=list(chunk_words),
+                    confidence=seg.confidence,
+                    speaker_id=seg.speaker_id,
+                )
+                result_segments.append(new_seg)
+                word_idx += chunk_size
+
+        # Only return if we actually split (more than 1 piece)
+        if len(result_segments) > 1:
+            return result_segments
+        return None
+
     def _rematch_unmatched_segments(self) -> int:
         """Merge adjacent unmatched segments near song sections and re-try matching."""
         segments = self.project.segments
@@ -1186,9 +1320,12 @@ class TranscribeTab(QWidget):
         self.btn_transcribe.setEnabled(True)
         self._lyrics_tracker = None
 
-        # Post-processing: merge small adjacent unmatched segments near songs,
-        # re-match them, then group matched lyrics into 2-3 line chunks,
-        # then fix any timing issues
+        # Post-processing pipeline:
+        # 1. Split long segments by matching sliding word windows against lyrics
+        # 2. Merge small adjacent unmatched segments and re-match
+        # 3. Group matched lyrics into 2-3 line chunks by section
+        # 4. Fix any timing issues
+        split_count = self._split_long_segments()
         rematched = self._rematch_unmatched_segments()
         grouped = self._group_lyrics_segments()
         self._fix_segment_timing()

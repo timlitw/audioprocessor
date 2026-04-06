@@ -46,8 +46,8 @@ class WarmBokeh(Background):
                 "pulse_speed": rng.uniform(0.3, 0.7),
                 "pulse_phase": rng.uniform(0, math.tau),
                 # Visible alpha breathing
-                "alpha_base": rng.randint(20, 55),
-                "alpha_pulse": rng.randint(8, 20),
+                "alpha_base": rng.randint(60, 120),
+                "alpha_pulse": rng.randint(15, 40),
                 "alpha_speed": rng.uniform(0.2, 0.5),
                 "alpha_phase": rng.uniform(0, math.tau),
                 "color": (r, g, b),
@@ -322,8 +322,149 @@ class CustomImage(Background):
         painter.fillRect(0, 0, width, height, QColor(0, 0, 0, 50))
 
 
+class Aurora(Background):
+    """Slow-moving curtains of soft color, like northern lights."""
+
+    name = "Aurora"
+
+    def __init__(self, seed: int = 42):
+        rng = random.Random(seed)
+        self._bands = []
+        colors = [
+            (40, 180, 120),   # green
+            (60, 200, 160),   # teal-green
+            (80, 140, 200),   # blue
+            (120, 80, 200),   # purple
+            (60, 160, 180),   # cyan
+            (100, 200, 140),  # mint
+        ]
+        for i in range(8):
+            r, g, b = rng.choice(colors)
+            self._bands.append({
+                "color": (r, g, b),
+                "y_center": rng.uniform(0.15, 0.55),
+                "amplitude": rng.uniform(0.03, 0.08),
+                "freq": rng.uniform(0.3, 0.8),
+                "speed": rng.uniform(0.02, 0.06),
+                "phase": rng.uniform(0, math.tau),
+                "width": rng.uniform(0.08, 0.18),
+                "alpha": rng.randint(30, 70),
+            })
+
+    def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
+        # Dark background with subtle blue
+        bg_b = 18 + int(3 * math.sin(time_seconds * 0.01))
+        painter.fillRect(0, 0, width, height, QColor(5, 5, bg_b))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        for band in self._bands:
+            r, g, b = band["color"]
+            alpha = band["alpha"] + int(15 * math.sin(time_seconds * 0.08 + band["phase"]))
+
+            # Draw the aurora as vertical strips with varying height
+            strip_width = max(4, width // 80)
+            for sx in range(0, width, strip_width):
+                x_frac = sx / width
+                # Undulating curtain shape
+                wave = math.sin(x_frac * band["freq"] * math.tau + time_seconds * band["speed"] + band["phase"])
+                wave2 = math.sin(x_frac * band["freq"] * 1.7 * math.tau + time_seconds * band["speed"] * 0.7 + band["phase"] * 2)
+
+                y_center = band["y_center"] + band["amplitude"] * (wave * 0.7 + wave2 * 0.3)
+                band_height = band["width"] * (0.8 + 0.2 * wave)
+
+                y_top = int((y_center - band_height * 0.5) * height)
+                y_bot = int((y_center + band_height * 0.5) * height)
+
+                # Vertical gradient — bright at top, fading down
+                grad = QLinearGradient(QPointF(sx, y_top), QPointF(sx, y_bot))
+                grad.setColorAt(0.0, QColor(r, g, b, int(alpha * 0.3)))
+                grad.setColorAt(0.3, QColor(r, g, b, alpha))
+                grad.setColorAt(0.6, QColor(r, g, b, int(alpha * 0.7)))
+                grad.setColorAt(1.0, QColor(r, g, b, 0))
+
+                painter.setBrush(grad)
+                painter.drawRect(sx, y_top, strip_width, y_bot - y_top)
+
+        # Add a few "stars" peeking through
+        rng = random.Random(42)
+        for _ in range(40):
+            sx = rng.uniform(0, 1) * width
+            sy = rng.uniform(0, 1) * height
+            twinkle = 0.5 + 0.5 * math.sin(time_seconds * rng.uniform(0.3, 0.8) + rng.uniform(0, math.tau))
+            sa = int(180 * twinkle)
+            painter.setBrush(QColor(255, 255, 240, sa))
+            painter.drawEllipse(QPointF(sx, sy), 1.2, 1.2)
+
+
+class Candlelight(Background):
+    """Warm flickering glow that slowly pulses, like a room lit by candles."""
+
+    name = "Candlelight"
+
+    def __init__(self, num_candles: int = 12, seed: int = 42):
+        rng = random.Random(seed)
+        self._candles = []
+        for _ in range(num_candles):
+            self._candles.append({
+                "x": rng.uniform(0.05, 0.95),
+                "y": rng.uniform(0.3, 0.95),
+                "radius": rng.uniform(0.15, 0.35),
+                "flicker_speed": rng.uniform(1.5, 4.0),
+                "flicker_phase": rng.uniform(0, math.tau),
+                "flicker2_speed": rng.uniform(3.0, 7.0),
+                "flicker2_phase": rng.uniform(0, math.tau),
+                "warmth": rng.uniform(0, 1),  # 0=amber, 1=warm white
+                "intensity": rng.uniform(0.6, 1.0),
+            })
+
+    def render(self, painter: QPainter, width: int, height: int, time_seconds: float):
+        # Dark warm background
+        bg_r = 18 + int(4 * math.sin(time_seconds * 0.03))
+        bg_g = 12 + int(2 * math.sin(time_seconds * 0.025))
+        painter.fillRect(0, 0, width, height, QColor(bg_r, bg_g, 8))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        for candle in self._candles:
+            # Flickering intensity — combines slow pulse with fast flicker
+            slow = math.sin(candle["flicker_speed"] * time_seconds + candle["flicker_phase"])
+            fast = math.sin(candle["flicker2_speed"] * time_seconds + candle["flicker2_phase"])
+            flicker = 0.7 + 0.2 * slow + 0.1 * fast
+            flicker *= candle["intensity"]
+
+            # Color based on warmth — amber to warm white
+            w = candle["warmth"]
+            r = int(255 * flicker)
+            g = int((140 + 80 * w) * flicker)
+            b = int((30 + 50 * w) * flicker)
+            alpha = int(90 * flicker)
+
+            cx = candle["x"] * width
+            cy = candle["y"] * height
+            radius = candle["radius"] * min(width, height) * (0.95 + 0.05 * slow)
+
+            # Soft radial glow
+            grad = QRadialGradient(QPointF(cx, cy), radius)
+            grad.setColorAt(0.0, QColor(r, g, b, alpha))
+            grad.setColorAt(0.2, QColor(r, g, b, int(alpha * 0.7)))
+            grad.setColorAt(0.5, QColor(r, g, int(b * 0.5), int(alpha * 0.3)))
+            grad.setColorAt(1.0, QColor(r // 3, g // 4, 0, 0))
+
+            painter.setBrush(grad)
+            painter.drawEllipse(QPointF(cx, cy), radius, radius)
+
+        # Subtle overall warm wash at the top (like light rising)
+        top_wash = QLinearGradient(QPointF(width / 2, 0), QPointF(width / 2, height * 0.5))
+        warm_alpha = int(20 + 8 * math.sin(time_seconds * 0.05))
+        top_wash.setColorAt(0.0, QColor(255, 180, 60, warm_alpha))
+        top_wash.setColorAt(1.0, QColor(255, 140, 30, 0))
+        painter.setBrush(top_wash)
+        painter.drawRect(0, 0, width, int(height * 0.5))
+
+
 # Registry of procedural backgrounds
-ALL_BACKGROUNDS = [WarmBokeh, Starfield, GradientSweep, Waves, SolidDark]
+ALL_BACKGROUNDS = [Aurora, Candlelight, Starfield, GradientSweep, Waves, SolidDark]
 
 def get_background(name: str) -> Background:
     for cls in ALL_BACKGROUNDS:

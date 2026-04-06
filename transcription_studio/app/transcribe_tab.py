@@ -742,9 +742,9 @@ class TranscribeTab(QWidget):
             if seg.note and seg.note.startswith("Matched:"):
                 words = seg.text.split()
                 n = len(words)
-                # Check if the text is the same phrase repeated
+                # Check if the text is the same phrase repeated (e.g., "Jesus my Lord Jesus my Lord")
                 for half in range(n // 3, n // 2 + 1):
-                    if n % half == 0 or (n > half and words[:half] == words[half:2*half]):
+                    if n >= half * 2 and words[:half] == words[half:2*half]:
                         # First half equals second half — deduplicate
                         seg.text = " ".join(words[:half])
                         break

@@ -13,6 +13,9 @@
 - **"Group Song Lines":** Merges consecutive matched lyrics into 2-3 line chunks (like church projector slides), respecting verse/chorus section boundaries
 - **Post-transcription cleanup:** After transcription, automatically re-matches fragmented segments and groups lyrics into display-friendly chunks
 - **Word alignment:** Maps Whisper's timestamps onto correct lyrics words using sequence alignment, ensuring video text sync even when word counts differ
+- **Lyrics matcher v2 (word-level):** New matching engine that flattens all Whisper words into a single stream and aligns against full song lyrics word-by-word, then splits into segments at line boundaries — more accurate than segment-level matching
+- V2 matcher wired into post-transcription pipeline as the primary matching approach
+- Error handling for matcher pipeline failures (graceful fallback instead of crash)
 
 ### Changed
 - **Whisper models:** Removed tiny/base models, added large-v3 (best quality); default changed to medium

@@ -39,7 +39,7 @@ The **sit-down tool** for when you have time. Transcribe the audio (runs locally
 ### Requirements
 
 - Python 3.12 or newer
-- Windows 10/11
+- Windows 10/11 or macOS
 
 ### Install
 

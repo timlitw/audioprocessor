@@ -14,3 +14,8 @@ build/
 *.ogg
 CLAUDE.md
 SETUP_GUIDE.md
+transcript.json
+downloaded images/
+memory/logs/
+build*.log
+

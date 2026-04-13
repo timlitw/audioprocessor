@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0] - 2026-04-13
+
+### Added
+- **Installer:** Inno Setup installer (`AudioProcessor-Setup-v0.8.0.exe`) bundles both apps with Start Menu shortcuts and optional desktop icons
+- **Build:** `python build.py both --installer` produces zips + installer in one command
+
+### Changed
+- TranscriptionStudio bundle is smaller — excludes unused `paramiko`, `cryptography`, `bcrypt`, `nacl`
+- Build subprocess now sets `PYTHONDONTWRITEBYTECODE=1` to work around a PyInstaller modulegraph crash on Python 3.13 when scanning freshly-written `.pyc` files
+
+---
+
 ## [0.3.0] - 2026-04-06
 
 ### Added — Lyrics Matching System

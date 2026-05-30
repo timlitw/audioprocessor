@@ -728,12 +728,12 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def _save_mp3(self):
+    def _save_mp3(self) -> bool:
         if not self.engine.is_loaded:
-            return
+            return False
         if not self._has_ffmpeg:
             QMessageBox.warning(self, "Error", "ffmpeg not found. Cannot export MP3.")
-            return
+            return False
 
         from app.dialogs.export_dialog import ExportDialog
         dlg = ExportDialog(self)
@@ -749,14 +749,16 @@ class MainWindow(QMainWindow):
                     save_mp3(self.engine.data, self.engine.sample_rate, file_path, dlg.bitrate)
                     self.engine.is_modified = False
                     self.audio_status.showMessage(f"Saved: {file_path}", 5000)
+                    return True
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
                 finally:
                     QApplication.restoreOverrideCursor()
+        return False
 
-    def _save_wav(self):
+    def _save_wav(self) -> bool:
         if not self.engine.is_loaded:
-            return
+            return False
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save as WAV", "", "WAV Files (*.wav)"
         )
@@ -767,10 +769,20 @@ class MainWindow(QMainWindow):
                 save_wav(self.engine.data, self.engine.sample_rate, file_path)
                 self.engine.is_modified = False
                 self.audio_status.showMessage(f"Saved: {file_path}", 5000)
+                return True
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
             finally:
                 QApplication.restoreOverrideCursor()
+        return False
+
+    def _save_matching_format(self) -> bool:
+        """Save using the source file's format; used by the close prompt.
+        Returns True only if a save actually completed."""
+        ext = Path(self.engine.file_path).suffix.lower() if self.engine.file_path else ""
+        if ext == ".mp3" and self._has_ffmpeg:
+            return self._save_mp3()
+        return self._save_wav()
 
     # --- Selection callbacks ---
 
@@ -822,6 +834,22 @@ class MainWindow(QMainWindow):
             self._load_file(urls[0].toLocalFile())
 
     def closeEvent(self, event):
+        if self.engine.is_modified:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "Save changes before closing?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                if not self._save_matching_format():
+                    event.ignore()  # save cancelled/failed — don't lose edits
+                    return
+            elif reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            # Discard falls through and closes
         self._stop()
         self.undo_mgr.clear()
         super().closeEvent(event)

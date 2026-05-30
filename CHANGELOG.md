@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1] - 2026-05-29
+
+### Fixed
+- **Unsaved-changes guard:** Closing the Audio Processor window with unsaved edits now prompts Save / Discard / Cancel instead of silently discarding them. "Save" exports in the source file's format (MP3 with bitrate dialog, else WAV); a cancelled save aborts the close so edits are never lost.
+
+---
+
 ## [0.8.0] - 2026-04-13
 
 ### Added

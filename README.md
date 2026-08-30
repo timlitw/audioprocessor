@@ -174,7 +174,7 @@ A two-tab app for transcribing audio and generating shareable videos.
 - **Tab** replays the current segment, **Enter** jumps to the next one
 - **Background triggers** -- right-click a segment to change the video background at that point (choose a procedural style or pick an image)
 - **Save/load projects** -- saves as a JSON file next to the audio (same name), pick up where you left off
-- **Export transcript** -- File → Export Transcript saves a plain text file with timestamps
+- **Export transcript** -- File → Export Transcript saves Word (.docx), Rich Text (.rtf), Markdown (.md), plain text (.txt), or subtitles (.srt), with options for timestamps, speaker headers, and Singing sections
 
 ### Lyrics Matching
 - **Lyrics library** -- put `.md` or `.txt` files with song lyrics in a folder (default: `~/OneDrive/Music/lyrics`)
@@ -241,10 +241,16 @@ python main.py
 
 ### Editing the Transcript
 
+![Transcribe tab tips](docs/images/transcribe-tab-tips.png)
+
+- **Speaker names carry down** -- set a speaker once and it applies to every line below until you set it again
+- **Mark a whole song at once** -- select all the lines of the song, right-click inside the selection, and choose **Set type → Singing**
+- **Play from anywhere** -- highlight any line and click **Play** to play from there
+
 - **Double-click the Text column** to fix words Whisper got wrong
 - **Double-click the Speaker column** to name who's talking -- the name carries forward to all segments below until you change it again
 - **Right-click a segment** for more options:
-  - Set type to Speech, Singing, or Silence
+  - Set type to Speech, Singing, or Silence (applies to all selected lines when you right-click inside a selection)
   - Split a segment at the midpoint
   - Merge with the previous or next segment
   - Delete a segment

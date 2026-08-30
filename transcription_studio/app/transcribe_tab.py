@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QComboBox, QTableWidget, QTableWidgetItem, QSplitter, QFileDialog,
     QProgressBar, QGroupBox, QApplication, QHeaderView, QMenu,
-    QAbstractItemView, QMessageBox,
+    QAbstractItemView, QMessageBox, QDialog,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QShortcut, QKeySequence
@@ -16,6 +16,8 @@ from audio.playback import PlaybackEngine
 from audio.file_io import load_audio, FILE_FILTER
 from core.project import TranscriptProject, Segment, Word, Speaker
 from core.settings import get_last_directory, set_last_directory, get_lyrics_dir
+from core.exporters import export_transcript, FORMATS
+from app.export_dialog import ExportOptionsDialog
 from lyrics.library import LyricsLibrary
 from lyrics.matcher import LyricsMatcher, SongTracker
 from lyrics.alignment import align_words
@@ -235,11 +237,14 @@ class TranscribeTab(QWidget):
 
         menu.addSeparator()
 
-        # Type submenu
-        type_menu = menu.addMenu("Set type")
+        # Type submenu — applies to all selected rows when right-clicking inside a selection
+        selected_rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()))
+        type_rows = selected_rows if row in selected_rows and len(selected_rows) > 1 else [row]
+        label = "Set type" if len(type_rows) == 1 else f"Set type ({len(type_rows)} lines)"
+        type_menu = menu.addMenu(label)
         for t in ["speech", "singing", "silence"]:
             act = type_menu.addAction(t.title())
-            act.triggered.connect(lambda checked, typ=t: self._set_segment_type(row, typ))
+            act.triggered.connect(lambda checked, typ=t: self._set_segments_type(type_rows, typ))
 
         menu.addSeparator()
 
@@ -261,7 +266,6 @@ class TranscribeTab(QWidget):
             act_match = menu.addAction(f"Match Lyrics ({self._lyrics_library.song_count} songs)")
             act_match.triggered.connect(lambda: self._match_lyrics(row))
 
-        selected_rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()))
         if len(selected_rows) >= 1:
             act_save_song = menu.addAction("Save as Song...")
             act_save_song.triggered.connect(lambda: self._save_as_song(selected_rows))
@@ -354,6 +358,12 @@ class TranscribeTab(QWidget):
                 # Refresh display to show sticky propagation
                 self._refresh_display_speakers()
                 self.info_label.setText(f"Speaker set to '{new_name}' from {self.project.format_time(seg.start)} onward")
+
+    def _set_segments_type(self, rows: list[int], seg_type: str):
+        for row in rows:
+            self._set_segment_type(row, seg_type)
+        if len(rows) > 1:
+            self.info_label.setText(f"Set {len(rows)} lines to {seg_type.title()}")
 
     def _set_segment_type(self, row: int, seg_type: str):
         seg = self._get_segment_for_row(row)
@@ -1347,31 +1357,46 @@ class TranscribeTab(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
 
     def _export_transcript(self):
-        """Export transcript as plain text with timestamps."""
+        """Export transcript as a document (docx/rtf/md/txt/srt)."""
         if not self.project.segments:
             QMessageBox.information(self, "Export", "No transcript to export.")
             return
 
+        dialog = ExportOptionsDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        opts = dialog.options()
+
         default_name = ""
         if self.project.audio_file:
-            default_name = Path(self.project.audio_file).stem + ".txt"
+            default_name = Path(self.project.audio_file).stem + ".docx"
+        start_path = str(Path(get_last_directory()) / default_name) if get_last_directory() else default_name
 
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export Transcript", default_name, "Text Files (*.txt);;All Files (*)"
+        filters = {
+            "Word Document (*.docx)": "docx",
+            "Rich Text (*.rtf)": "rtf",
+            "Markdown (*.md)": "md",
+            "Plain Text (*.txt)": "txt",
+            "Subtitles (*.srt)": "srt",
+        }
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self, "Export Transcript", start_path, ";;".join(filters)
         )
         if not file_path:
             return
 
-        lines = []
-        for seg in self.project.segments:
-            if not seg.text.strip():
-                continue
-            timestamp = self.project.format_time(seg.start)
-            lines.append(f"[{timestamp}] {seg.text}")
+        fmt = Path(file_path).suffix.lstrip(".").lower()
+        if fmt not in FORMATS:
+            fmt = filters.get(selected_filter, "txt")
+            file_path = f"{file_path}.{fmt}"
 
         try:
-            Path(file_path).write_text("\n".join(lines), encoding="utf-8")
-            self.info_label.setText(f"Exported {len(lines)} lines to {Path(file_path).name}")
+            n = export_transcript(
+                self.project, file_path, fmt,
+                opts["timestamps"], opts["speakers"], opts["types"],
+            )
+            set_last_directory(str(Path(file_path).parent))
+            self.info_label.setText(f"Exported {n} lines to {Path(file_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export:\n{e}")
 

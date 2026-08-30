@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Transcription Studio export formats:** File → Export Transcript now writes Word (.docx), Rich Text (.rtf), Markdown (.md), plain text (.txt), or subtitles (.srt). An options dialog chooses whether timestamps, speaker names (shown as headers until the speaker changes), and Singing sections are included; choices are remembered.
+- **Transcription Studio multi-line type change:** select several lines (e.g. a whole song), right-click inside the selection → "Set type (N lines)" applies Speech/Singing/Silence to all of them at once.
+
+### Fixed
+- Transcription Studio project .json files are now always written and read as UTF-8 (older files in the Windows default encoding still load).
+
+---
+
 ## [0.8.1] - 2026-05-29
 
 ### Fixed

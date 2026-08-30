@@ -10,6 +10,9 @@ ts_datas = collect_data_files('imageio_ffmpeg')
 # Collect faster_whisper assets (silero_vad_v6.onnx)
 ts_datas += collect_data_files('faster_whisper')
 
+# python-docx default document template
+ts_datas += collect_data_files('docx')
+
 # Collect ctranslate2 binaries manually (avoid collect_all which triggers bytecode scanning bug)
 import ctranslate2 as _ct2
 _ct2_dir = os.path.dirname(_ct2.__file__)
@@ -35,6 +38,7 @@ a = Analysis(
         'ctranslate2._ext',
         'huggingface_hub',
         'tokenizers',
+        'docx',
     ],
     hookspath=[],
     hooksconfig={},

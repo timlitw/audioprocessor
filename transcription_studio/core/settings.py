@@ -75,3 +75,16 @@ def set_lyrics_dir(directory: str) -> None:
     settings = load_settings()
     settings["lyrics_dir"] = directory
     save_settings(settings)
+
+
+DEFAULT_EXPORT_OPTIONS = {"timestamps": False, "speakers": True, "types": True}
+
+
+def get_export_options() -> dict:
+    return {**DEFAULT_EXPORT_OPTIONS, **load_settings().get("export_options", {})}
+
+
+def set_export_options(options: dict) -> None:
+    settings = load_settings()
+    settings["export_options"] = options
+    save_settings(settings)

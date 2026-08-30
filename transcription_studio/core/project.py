@@ -100,12 +100,16 @@ class TranscriptProject:
             "segments": [self._segment_to_dict(s) for s in self.segments],
         }
 
-        Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self._dirty = False
 
     def load(self, path: str):
         """Load project from transcript.json."""
-        data = json.loads(Path(path).read_text())
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except UnicodeDecodeError:
+            # Older projects were written in the Windows default encoding
+            data = json.loads(Path(path).read_text(encoding="cp1252"))
 
         self.version = data.get("version", "1.0")
         self.created = data.get("created", "")

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-08-29
 
 ### Added
 - **Transcription Studio export formats:** File → Export Transcript now writes Word (.docx), Rich Text (.rtf), Markdown (.md), plain text (.txt), or subtitles (.srt). An options dialog chooses whether timestamps, speaker names (shown as headers until the speaker changes), and Singing sections are included; choices are remembered.

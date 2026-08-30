@@ -30,6 +30,26 @@
 
 ---
 
+## [Unversioned] - 2026-04-06 to 2026-04-07
+
+> Work shipped as zip builds after 0.3.0 without a version bump. There were no 0.4–0.7 releases — the next version was 0.8.0. Reconstructed from git history.
+
+### Added
+- **Aurora and Candlelight backgrounds:** two new procedural video backgrounds (Warm Bokeh removed — too dark)
+- **Long-segment splitting:** when Whisper produces one long segment (25s, 30+ words), post-processing slides a window across the words, matches each chunk against the lyrics library, and splits it into separate correctly-timed segments; unmatched chunks are kept in ~8-word pieces
+- **Word count ratio check:** lyrics matcher rejects matches that would cram long lyrics into short segments (input > lyrics × 1.8), and re-splits matched segments where the match covers less than 60% of the original words
+- macOS listed as a supported platform in the README
+
+### Changed
+- **Anchor-based word alignment:** word timing now uses exact word matches as anchors and interpolates between them (falls back to even distribution when <30% of words match) — replaces the SequenceMatcher approach that produced negative durations and cramped timing
+- **Save as Song** breaks lines longer than 10 words at punctuation into 6–10 word phrases, so saved lyrics match Whisper's natural segmentation
+
+### Fixed
+- Lyrics dedup bug in segment timing that truncated non-duplicate text
+- Video timing: duplicate lyrics removed and word timing rebuilt when segments are merged
+
+---
+
 ## [0.3.0] - 2026-04-06
 
 ### Added — Lyrics Matching System

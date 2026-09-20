@@ -1,6 +1,6 @@
-# Audio Processor + Transcription Studio
+# Audio Processor + Transcription Studio + Stream Recorder
 
-Two free tools for sound techs who record live performances at churches, weddings, and events.
+Three free tools for sound techs who record live performances at churches, weddings, and events.
 
 ## The Problem
 
@@ -8,13 +8,16 @@ You had a singing service or program or wedding. The soundman has other duties a
 
 Now family or others want to listen and the file from Listen To Church has 30-60 minutes of either dead space or the sounds of people being ushered into place. The folks that get the audio file do not know where the actual event starts.
 
-## The Solution: Two Tools
+## The Solution: Three Tools
 
 ### Tool 1: Audio Processor
 The **quick tool** for Sunday morning. Open the recording, find where the event starts, trim the dead time, clean up the audio, export as MP3. Done in 5 minutes, file goes out to the congregation.
 
 ### Tool 2: Transcription Studio
 The **sit-down tool** for when you have time. Transcribe the audio (runs locally, no cloud, no cost), name the speakers, edit the transcript, then generate a shareable video with ambient backgrounds, speaker names, and synced text -- ready for YouTube or the church website.
+
+### Tool 3: Stream Recorder
+The **catch-it-live tool**. Someone calls and asks for a recording of their service, but their sound tech doesn't know how or doesn't have time. Set their stream URL, their service time and their time zone, and your computer records it for them -- starting before the service, noticing when the audio actually begins, and stopping on its own when the stream goes quiet.
 
 ---
 
@@ -311,6 +314,152 @@ The output MP4 plays in Windows Media Player and is ready to upload to YouTube, 
 | Space | Play / Pause (or toggle video preview) |
 | Tab | Replay current segment |
 | Enter | Next segment and play |
+
+---
+
+# Tool 3: Stream Recorder
+
+Records live Listen To Church streams to MP3 on a schedule. Several churches at
+once, including services that overlap in different time zones.
+
+Where Audio Processor cleans up a recording you already have, Stream Recorder is
+how you get the recording in the first place -- for a church whose sound tech
+can't make one.
+
+## Features
+
+- **Several at once** -- four churches in three time zones, overlapping, is fine.
+  Each is an independent recording with its own settings and its own live status.
+- **The list is saved** -- set up Saturday night, close the app, reboot, come back
+  Sunday morning and everything is still queued
+- **Waits for a late stream** -- if the sound tech hasn't started it yet, it keeps
+  retrying for a window you choose instead of failing outright
+- **Connects early** -- a head start (10 minutes by default) so you never clip the opening
+- **Finds the real start** -- reports how far into the file the audio actually begins,
+  so you know exactly where to trim in Audio Processor
+- **Stops on silence** -- ends the recording after the stream goes quiet
+- **Hard stop backstop** -- a maximum length, in case the stream never goes quiet
+- **Keeps your computer awake** -- set a job up the night before and the machine
+  won't sleep through it
+- **Survives dropouts** -- reconnects automatically and keeps writing one file
+- **No quality loss** -- the stream is already MP3, so it's copied through untouched
+
+## Run
+
+```bash
+cd stream_recorder
+python main.py
+```
+
+## How to Use the Stream Recorder
+
+The window is a list of scheduled recordings. Each row shows one church and its
+own live status. **Add**, **Edit** and **Remove** manage the list; **Start Now**
+begins a selected recording immediately; **Stop** ends one early.
+
+```
+Church                   Starts                    Max     Status
+Pleasant View Mennonite  Sun Sep 20, 9:50 AM CDT   2h30m   Recording 00:41:12 - audio began at 00:09:47
+Shady Grove              Sun Sep 20, 9:00 AM EDT   2h      Waiting - starts in 3h 12m
+Bethel Fellowship        Sun Sep 20, 10:30 AM PDT  8h      Done - audio starts at 00:09:47 - 41.2 MB
+```
+
+### Entering the stream
+
+Paste the stream URL. It looks like this:
+
+```
+http://us-az-phoenix-14.listentochurch.com:8000/1240536.mp3
+```
+
+Click **Test** to confirm it's reachable -- worth doing when you set a job up the
+night before.
+
+Type the church name in the **Church** box. The URL only identifies the Icecast
+server and the account number, so the name has to come from you. It becomes part
+of the file name:
+
+```
+Pleasant-View-Mennonite_2026-09-20_0950.mp3
+```
+
+### Setting the time
+
+Enter the time the service starts **in the church's own time zone**, then pick
+that zone. The dialog shows both their time and yours:
+
+```
+Connects Sun Sep 20, 9:50 AM CDT  -  your time Sun Sep 20, 8:50 AM MDT
+Hard stop at Sun Sep 20, 12:20 PM CDT (2h 30m max)
+```
+
+**Connect ... min early** is the head start. At the default of 10 minutes, a
+10:00 AM service connects at 9:50.
+
+**Keep trying for** covers a sound tech who starts the stream late. If the stream
+isn't up when the recording is due, it retries every 20 seconds for this long
+before giving up.
+
+### Setting how it stops
+
+Two independent rules, and whichever happens first wins:
+
+- **Record at most** -- the hard stop, up to 12h 59m. Always set this; it's what
+  saves you if the stream never goes silent.
+- **Stop after N min of silence** -- the normal way a recording ends.
+
+**Silence level** is the threshold below which audio counts as silence. The
+default of -40 dB is safe for a typical stream. Lower it (toward -60) if a noisy
+room keeps a recording running past the end of the service; raise it (toward -30)
+if a quiet hall stops one too early.
+
+> **The silence timer only starts once real audio has been heard.** The quiet
+> before the service can never stop the recording, no matter how early you connect.
+
+Audio has to hold for 20 seconds before it counts as the start, so a door closing
+or someone testing a microphone during the dead air won't trigger it.
+
+### Long meetings
+
+For a 4-8 hour meeting, **raise the silence setting above the longest break you
+expect** -- 45 minutes or so. At the default of 5 minutes the recording ends at
+the first meal or recess. The dialog warns you when a long recording still has a
+short silence setting.
+
+### What you get
+
+One MP3 per recording, covering everything from connect to stop -- including the
+dead air at the front. Nothing is thrown away, because a trim you didn't want
+can't be undone. The row and the log tell you where the service actually starts:
+
+```
+Pleasant View Mennonite: finished - stopped after 5 minutes of silence. 41.2 MB.
+Trim point: audio starts 00:09:47 into the file.
+```
+
+Open that file in Audio Processor, go to that point, and trim.
+
+### Typical Stream Recorder Workflow
+
+1. Someone calls asking for a recording; get their stream URL and service time
+2. **Add** -- paste the URL, type the church name, set their time and time zone
+3. **Test** the stream to be sure it's reachable
+4. Repeat for any other churches that week; overlapping times are fine
+5. Leave the app running -- it connects, records and stops on its own
+6. Open the finished MP3 in Audio Processor, trim to the reported start, export
+
+### Notes
+
+- The list is saved to disk, so it survives closing the app or rebooting.
+- Your computer has to be **on and awake** when a recording is due. The app blocks
+  sleep while anything is scheduled or running, but it can't wake a machine that
+  is already asleep or powered off.
+- If a recording's time passed while the app was closed, it's marked **missed**
+  rather than started late. Select it and hit **Start Now** if the service is
+  still going.
+- The machine can be locked -- recording continues behind the lock screen.
+- A 60-minute service at a typical 32-64 kb/s stream is roughly 15-30 MB. An
+  8-hour meeting is 115-230 MB.
 
 ---
 

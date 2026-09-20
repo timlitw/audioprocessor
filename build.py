@@ -1,4 +1,4 @@
-"""Build both apps with PyInstaller and create distribution zips."""
+"""Build all three apps with PyInstaller and create distribution zips."""
 
 import os
 import subprocess
@@ -34,6 +34,7 @@ def build_installer(version: str) -> Path:
 APPS = [
     ("audio_processor.spec", "AudioProcessor"),
     ("transcription_studio.spec", "TranscriptionStudio"),
+    ("stream_recorder.spec", "StreamRecorder"),
 ]
 
 
@@ -86,18 +87,25 @@ def create_zip(folder: Path, app_name: str) -> Path:
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Build Audio Processor and Transcription Studio")
-    parser.add_argument("app", nargs="?", choices=["audio", "transcription", "both"],
-                        default="both", help="Which app to build (default: both)")
+    parser = argparse.ArgumentParser(
+        description="Build Audio Processor, Transcription Studio and Stream Recorder")
+    parser.add_argument("app", nargs="?",
+                        choices=["audio", "transcription", "stream", "all", "both"],
+                        default="all", help="Which app to build (default: all)")
     parser.add_argument("--no-zip", action="store_true", help="Skip zip creation")
     parser.add_argument("--installer", action="store_true", help="Build Inno Setup installer after PyInstaller (requires both apps)")
     args = parser.parse_args()
 
+    # "both" predates Stream Recorder; keep it working as a synonym for "all".
+    everything = args.app in ("all", "both")
+
     apps_to_build = []
-    if args.app in ("audio", "both"):
+    if everything or args.app == "audio":
         apps_to_build.append(APPS[0])
-    if args.app in ("transcription", "both"):
+    if everything or args.app == "transcription":
         apps_to_build.append(APPS[1])
+    if everything or args.app == "stream":
+        apps_to_build.append(APPS[2])
 
     for spec_name, app_name in apps_to_build:
         folder = build_app(spec_name, app_name)
@@ -105,8 +113,8 @@ def main():
             create_zip(folder, app_name)
 
     if args.installer:
-        if args.app != "both":
-            print("\nERROR: --installer requires building both apps")
+        if not everything:
+            print("\nERROR: --installer requires building all apps")
             sys.exit(1)
         build_installer(get_version())
 

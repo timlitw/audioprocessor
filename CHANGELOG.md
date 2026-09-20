@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.0] - 2026-09-19
+
+### Added
+- **Stream Recorder (new tool):** records live Listen To Church streams to MP3 on a schedule, for churches whose sound tech can't make a recording themselves. Enter the stream URL, the church's service time and their time zone; it connects early, detects when the audio actually starts, and stops after a set period of silence.
+  - Multiple concurrent recordings across different streams and time zones, including overlapping services. Each row shows its own live status.
+  - The scheduled list is saved to disk and survives closing the app or rebooting. A recording whose time passed while the app was closed is marked missed rather than started late.
+  - The silence timer arms only after audio is first heard, so pre-service dead air can never end a recording early.
+  - Hard-stop maximum length as a backstop, plus a per-job retry window for a stream that isn't up yet at start time.
+  - Warns when a long recording still has a short silence setting, which would otherwise end an all-day meeting at the first break.
+  - Streams are copied to MP3 rather than re-encoded, so there is no quality loss.
+  - Blocks system sleep while anything is scheduled or running.
+- Stream Recorder is included in the Windows installer alongside Audio Processor and Transcription Studio.
+
+---
+
 ## [0.9.0] - 2026-08-29
 
 ### Added

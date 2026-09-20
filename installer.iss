@@ -1,6 +1,6 @@
-; Inno Setup script for Audio Processor + Transcription Studio
+; Inno Setup script for Audio Processor + Transcription Studio + Stream Recorder
 ; Build with: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
-; Or via: python build.py both --installer
+; Or via: python build.py all --installer
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -34,13 +34,16 @@ Name: "desktopicon"; Description: "Create desktop shortcuts"; GroupDescription: 
 [Files]
 Source: "dist\AudioProcessor\*"; DestDir: "{app}\AudioProcessor"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "dist\TranscriptionStudio\*"; DestDir: "{app}\TranscriptionStudio"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\StreamRecorder\*"; DestDir: "{app}\StreamRecorder"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Audio Processor"; Filename: "{app}\AudioProcessor\AudioProcessor.exe"
 Name: "{group}\Transcription Studio"; Filename: "{app}\TranscriptionStudio\TranscriptionStudio.exe"
+Name: "{group}\Stream Recorder"; Filename: "{app}\StreamRecorder\StreamRecorder.exe"
 Name: "{group}\Uninstall Audio Processor Suite"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Audio Processor"; Filename: "{app}\AudioProcessor\AudioProcessor.exe"; Tasks: desktopicon
 Name: "{autodesktop}\Transcription Studio"; Filename: "{app}\TranscriptionStudio\TranscriptionStudio.exe"; Tasks: desktopicon
+Name: "{autodesktop}\Stream Recorder"; Filename: "{app}\StreamRecorder\StreamRecorder.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\AudioProcessor\AudioProcessor.exe"; Description: "Launch Audio Processor"; Flags: nowait postinstall skipifsilent unchecked
